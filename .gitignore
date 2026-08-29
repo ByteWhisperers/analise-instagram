@@ -1,0 +1,28 @@
+# Segredos — NUNCA versionar
+config.local.json
+*.session
+.instaloader-session*
+session-*
+
+# Ambiente
+.venv/
+__pycache__/
+*.pyc
+
+# Dados baixados (pesados e de terceiros)
+dados/buscas/*
+dados/perfis/*
+dados/analises/*
+!dados/buscas/.gitkeep
+!dados/perfis/.gitkeep
+!dados/analises/.gitkeep
+
+# Saída gerada
+saida/*
+!saida/.gitkeep
+
+# Modelos de transcrição baixados
+modelos/
+
+# Sessao do Instagram (equivale a senha guardada)
+.sessoes/

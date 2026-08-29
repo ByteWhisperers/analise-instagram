@@ -1,0 +1,20 @@
+# Descoberta e listagem de perfis (o que o yt-dlp nao faz)
+apify-client==3.1.3
+
+# Download de video por link do post
+yt-dlp==2026.8.19
+curl-cffi==0.16.2      # impersonacao de TLS; sem ela o caminho anonimo degrada
+
+# Banco principal
+psycopg[binary]==3.3.4
+# pgvector: NAO instalado. No Windows exige compilar com MSVC, e nesta fase
+# nenhum embedding e gerado. Ver migrations/001_intelligence.sql, desvio 2.
+
+# Transcricao local (CPU, int8)
+faster-whisper==1.1.1
+
+# ffmpeg e instalado a parte (winget install Gyan.FFmpeg), nao via pip.
+
+# --- aposentado em 26/08/2026 (ver ADR 005) ---
+# instaloader==4.14.1  -> substituido pela Apify; nao exige mais conta nem cookie
+# browser_cookie3      -> so existia para reaproveitar sessao do navegador

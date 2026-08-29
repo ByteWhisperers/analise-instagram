@@ -1,0 +1,62 @@
+{
+  "_leia": "Copie este arquivo para config.local.json e preencha. config.local.json NUNCA vai para o Git.",
+  "postgres": {
+    "_leia": "O banco. Sem esta secao nada roda. A senha vai por parametro separado, nunca dentro de uma URL: senha forte tem /, @, : e [, que sao delimitadores de URI. Rode `preparar.py verificar` para conferir se esta tudo de pe.",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "analise_instagram",
+    "user": "postgres",
+    "password": "SUA_SENHA_DO_POSTGRES_AQUI"
+  },
+  "dados": {
+    "_leia": "Retencao da midia bruta. O mp4 e re-baixavel pelo link; a transcricao nao e. Comeca tudo desligado: `pipeline.py limpar` so apaga com --aplicar.",
+    "apagar_midia_apos_transcricao": false,
+    "manter_dias": 30,
+    "avisar_acima_de_gb": 5
+  },
+  "apify": {
+    "_leia": "Token em console.apify.com/account/integrations. O plano gratis da US$ 5/mes e nao pede cartao.",
+    "token": "SEU_TOKEN_DA_APIFY_AQUI",
+    "actor": "apify/instagram-scraper",
+    "plano": "free",
+    "max_perfis": 40,
+    "posts_por_perfil": 10,
+    "teto_usd_por_rodada": 1.0,
+    "avisar_acima_de_usd": 0.5
+  },
+  "download": {
+    "_leia": "concorrencia baixa por causa do teto de requisicao anonima do yt-dlp, nao da maquina.",
+    "concorrencia": 2,
+    "timeout_segundos": 120,
+    "max_tentativas": 3,
+    "cookies_do_navegador": null
+  },
+  "score": {
+    "_leia": "Pesos do score de oportunidade. Mudar aqui re-ranqueia tudo na hora, sem recoletar. Nao precisam somar 1: sao renormalizados.",
+    "velocidade": 0.3,
+    "engajamento": 0.25,
+    "comentario": 0.2,
+    "visualizacao": 0.15,
+    "recencia": 0.1
+  },
+  "busca": {
+    "min_seguidores": 5000,
+    "max_perfis": 20,
+    "somente_publicos": true
+  },
+  "coleta": {
+    "posts_por_perfil": 10,
+    "segundos_entre_requisicoes": 8,
+    "segundos_entre_perfis": 60
+  },
+  "transcricao": {
+    "modelo": "small",
+    "_modelos_possiveis": [
+      "tiny",
+      "base",
+      "small"
+    ],
+    "tipo_computacao": "int8",
+    "idioma": "pt"
+  }
+}

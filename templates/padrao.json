@@ -1,0 +1,71 @@
+{
+  "_leia": "O visual mora aqui, nao no codigo. Copie este arquivo, mude os valores e voce tem outro estilo. Cores em hexadecimal normal, como no CSS.",
+
+  "nome": "meme-branco",
+
+  "canvas": {
+    "largura": 1080,
+    "altura": 1920,
+    "fundo": "#FFFFFF",
+    "fps": 30
+  },
+
+  "video": {
+    "_leia": "O video e encaixado dentro desta area sem distorcer. Sobra branco em volta.",
+    "topo": 560,
+    "altura": 980,
+    "margem_lateral": 60
+  },
+
+  "headline": {
+    "mostrar": true,
+    "fonte": "arialbd.ttf",
+    "tamanho": 62,
+    "cor": "#111111",
+    "topo": 250,
+    "largura_em_caracteres": 30,
+    "espaco_entre_linhas": 2
+  },
+
+  "perfil": {
+    "_leia": "O @ da pagina. Deixe mostrar em false se nao quiser creditar.",
+    "mostrar": true,
+    "prefixo": "@",
+    "fonte": "arial.ttf",
+    "tamanho": 38,
+    "cor": "#8A8A8A",
+    "topo": 1620
+  },
+
+  "logo": {
+    "_leia": "Caminho de um PNG. Deixe null para nao usar.",
+    "arquivo": null,
+    "altura": 90,
+    "topo": 110,
+    "posicao": "centro"
+  },
+
+  "legenda": {
+    "mostrar": true,
+    "fonte": "Arial",
+    "tamanho": 74,
+    "negrito": true,
+    "cor": "#FFFFFF",
+    "cor_destaque": "#FFE100",
+    "cor_contorno": "#000000",
+    "contorno": 6,
+    "sombra": 0,
+    "destacar_palavra": true,
+    "palavras_por_grupo": 3,
+    "pausa_que_quebra": 0.8,
+    "posicao_y": 1050,
+    "margem_lateral": 80
+  },
+
+  "saida": {
+    "_leia": "veryfast e o equilibrio para lote. Suba para 'slow' se quiser arquivo menor e tiver tempo.",
+    "preset": "veryfast",
+    "qualidade": 23,
+    "audio_kbps": 128
+  }
+}

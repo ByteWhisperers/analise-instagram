@@ -1,0 +1,12 @@
+# Tudo em LF dentro do repositorio.
+#
+# Sem isto, o git do Windows converte para CRLF no checkout e o proximo
+# `git status` acusa 60 arquivos modificados sem ninguem ter mexido em nada —
+# ruido que esconde a mudanca de verdade.
+* text=auto eol=lf
+
+# Binarios nao se convertem.
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.ass binary

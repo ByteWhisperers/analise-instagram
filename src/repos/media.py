@@ -88,3 +88,112 @@ def total_em_disco(conexao, provedor="local"):
         "SELECT count(*), COALESCE(sum(file_size), 0) FROM media_assets "
         "WHERE storage_provider = %s", (provedor,)).fetchone()
     return {"arquivos": linha[0], "bytes": int(linha[1])}
+
+
+# ------------------------------------------------------------------ retencao
+
+
+COLUNAS_LIBERAVEL = ("id", "content_id", "storage_key", "file_size",
+                     "created_at", "username", "platform_content_id")
+
+
+def com_derivado_pronto(conexao, provedor="local", dias=None):
+    """Vídeos cujo conteúdo já tem transcrição gravada.
+
+    São os únicos candidatos legítimos a sumir do disco: o caro já foi
+    extraído, e o mp4 é re-baixável pelo link do post. Apagar antes da
+    transcrição jogaria fora a única coisa que custou tempo de CPU.
+
+    `dias` restringe aos baixados há mais de N dias — quem quer margem para
+    conferir o resultado antes de perder o original.
+    """
+    sql = """
+        SELECT a.id, a.content_id, a.storage_key, a.file_size, a.created_at,
+               p.username, c.platform_content_id
+        FROM media_assets a
+        JOIN contents c ON c.id = a.content_id
+        JOIN profiles p ON p.id = c.profile_id
+        WHERE a.asset_type = 'video'
+          AND a.storage_provider = %s
+          AND EXISTS (SELECT 1 FROM transcripts t WHERE t.content_id = a.content_id)
+    """
+    parametros = [provedor]
+
+    if dias is not None:
+        sql += " AND a.created_at < now() - make_interval(days => %s)"
+        parametros.append(int(dias))
+
+    sql += " ORDER BY a.file_size DESC NULLS LAST"
+    return dicts(conexao.execute(sql, parametros), COLUNAS_LIBERAVEL)
+
+
+def por_tipo(conexao, provedor="local"):
+    """Quantos arquivos e quantos bytes em cada `asset_type`.
+
+    Responde "para onde o disco foi" sem abrir uma pasta sequer.
+    """
+    cursor = conexao.execute(
+        "SELECT asset_type, count(*), COALESCE(sum(file_size), 0) "
+        "FROM media_assets WHERE storage_provider = %s "
+        "GROUP BY asset_type ORDER BY 3 DESC", (provedor,))
+    return [{"tipo": t, "arquivos": n, "bytes": int(b)}
+            for t, n, b in cursor.fetchall()]
+
+
+def por_perfil(conexao, provedor="local", limite=5):
+    """Os perfis que mais ocupam disco."""
+    cursor = conexao.execute(
+        """
+        SELECT p.username, count(*), COALESCE(sum(a.file_size), 0)
+        FROM media_assets a
+        JOIN contents c ON c.id = a.content_id
+        JOIN profiles p ON p.id = c.profile_id
+        WHERE a.storage_provider = %s
+        GROUP BY p.username
+        ORDER BY 3 DESC
+        LIMIT %s
+        """, (provedor, limite))
+    return [{"perfil": u, "arquivos": n, "bytes": int(b)}
+            for u, n, b in cursor.fetchall()]
+
+
+def chaves_registradas(conexao, provedor="local"):
+    """Todo caminho que o banco acha que existe no disco.
+
+    Serve para a reconciliação: o que está aqui e não está no disco é registro
+    órfão; o que está no disco e não está aqui é arquivo que ninguém pediu.
+    """
+    cursor = conexao.execute(
+        "SELECT storage_key FROM media_assets WHERE storage_provider = %s",
+        (provedor,))
+    return [linha[0] for linha in cursor.fetchall()]
+
+
+def esquecer(conexao, asset_id):
+    """Apaga o registro do arquivo. **O byte é problema de quem chamou.**
+
+    Por que apagar a linha, e não marcá-la: `tem()` é a checagem de
+    idempotência do download. Uma linha que aponta para arquivo inexistente
+    faz o sistema afirmar que tem um vídeo que não tem — e aí a etapa de
+    transcrição falha lá na frente, longe da causa.
+
+    O job em `processing_jobs` continua `done`, então isto **não** devolve o
+    vídeo para a fila. Há teste para essa afirmação.
+    """
+    cursor = conexao.execute(
+        "DELETE FROM media_assets WHERE id = %s RETURNING storage_key",
+        (asset_id,))
+    linha = cursor.fetchone()
+    return linha[0] if linha else None
+
+
+def registros_da_chave(conexao, chave, provedor="local"):
+    """Os registros que apontam para um caminho. Normalmente um só.
+
+    Serve para a reconciliação: quando o arquivo sumiu do disco, é por aqui
+    que se acha a linha que ficou mentindo.
+    """
+    cursor = conexao.execute(
+        "SELECT id, content_id, asset_type, storage_key FROM media_assets "
+        "WHERE storage_key = %s AND storage_provider = %s", (str(chave), provedor))
+    return dicts(cursor, ("id", "content_id", "asset_type", "storage_key"))

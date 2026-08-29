@@ -25,6 +25,7 @@ o escopo cresceu.
 
 | Etapa | Comando | Entrega |
 |---|---|---|
+| Preparo | `preparar.py verificar` | o que falta na máquina, e o conserto |
 | Esquema | `migrar.py aplicar` | as 20 tabelas do PostgreSQL |
 | Descoberta | `pipeline.py descobrir "<nicho>"` | perfis em `profiles` |
 | Coleta | `pipeline.py coletar --nicho X` | conteúdo + fila em `processing_jobs` |
@@ -32,6 +33,7 @@ o escopo cresceu.
 | Situação | `pipeline.py status` | cobertura, fila e custo por nível |
 | Score | `pipeline.py ranking --nicho X` | quem performa acima do grupo |
 | Conferência | `pipeline.py schema "<nicho>"` | item cru do Actor, por centavos |
+| Faxina | `pipeline.py limpar` | o que dá para liberar. Só apaga com `--aplicar` |
 | Transcrição | `src/transcrever.py` | `transcricao.json` por post |
 | Análise | `src/analisar.py` | `dados/analises/<perfil>.json` |
 | Relatório | `src/relatorio.py` | `saida/relatorio.html` |
@@ -42,6 +44,8 @@ Módulos de apoio, sem linha de comando própria:
 | Arquivo | Responsabilidade |
 |---|---|
 | `src/config.py` | caminhos do projeto e leitura validada do `config.local.json` |
+| `src/console.py` | faz stdout aguentar emoji. **Sem ele o `ranking` quebra** |
+| `src/preparar.py` | as 7 checagens do ambiente. Verifica e instrui, não instala |
 | `src/db.py` | conexão com o PostgreSQL e execução das migrations |
 | `src/repos/` | **a única camada que escreve SQL** — dez módulos, um por agregado |
 | `src/banco.py` | SQLite antigo. **Só sobrevive porque `transcrever.py`, `analisar.py` e `editar.py` ainda o importam.** Morre quando a Fase 3 for portada |
@@ -56,13 +60,14 @@ Módulos de apoio, sem linha de comando própria:
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
 | `tests/test_metricas.py` | 34 conferências das contas |
 | `tests/test_banco.py` | 54 conferências do banco e das consultas |
-| `tests/test_coleta.py` | 63 conferências da normalização, storage e download |
+| `tests/test_coleta.py` | 73 conferências da normalização, storage, download e faxina |
 | `tests/test_desempenho.py` | 66 conferências dos scores e do crescimento |
-| `tests/test_db.py` | 47 conferências da conexão e das migrations |
-| `tests/test_repos_*.py` | 230 conferências contra um PostgreSQL de verdade |
+| `tests/test_db.py` | 58 conferências da conexão, das migrations e do config |
+| `tests/test_preparar.py` | 26 conferências do preparo e da saída de console |
+| `tests/test_repos_*.py` | 263 conferências contra um PostgreSQL de verdade |
 
-**494 conferências, todas passando** (contadas na saída real, não estimadas).
-Rode as nove antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
+**574 conferências, todas passando** (contadas na saída real, não estimadas).
+Rode as onze antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
 o PostgreSQL de pé; se ele não responder, elas avisam e saem sem falhar.
 
 Apagados em 28/08/2026: `src/ig.py`, `src/buscar.py`, `src/coletar.py`,
@@ -74,6 +79,12 @@ usam um banco descartável (`..._teste`) criado e derrubado a cada rodada.
 nenhum embedding é gerado nesta fase.
 
 O `python` do sistema não serve — use sempre `.venv\Scripts\python.exe`.
+**Nunca rode com `PYTHONIOENCODING` setado à mão:** foi assim que o bug do
+emoji no `ranking` ficou escondido por dois dias. Quem cuida disso é
+`console.preparar()`, dentro do próprio programa.
+
+**O projeto é um repositório Git desde 29/08/2026.** Antes disso não havia
+desfazer, e isso travava faxina de código.
 
 ## Restrições
 
@@ -116,6 +127,7 @@ de propósito. Isto é uma ferramenta, não um site publicado.
 - [003 — SQLite como espinha](docs/decisions/003-sqlite-como-espinha.md)
 - [004 — ffmpeg em vez de Remotion](docs/decisions/004-ffmpeg-em-vez-de-remotion.md)
 - [005 — Apify descobre, yt-dlp baixa; a raspagem própria sai](docs/decisions/005-apify-em-vez-de-raspagem-propria.md)
+- [006 — PostgreSQL nativo em vez de Docker](docs/decisions/006-postgres-nativo-em-vez-de-docker.md) — *vale enquanto a máquina for esta*
 
 ## Processo
 

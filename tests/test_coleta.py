@@ -257,6 +257,55 @@ conferir("sucesso False", resultado.sucesso, False)
 conferir_que("com motivo legivel", bool(resultado.erro))
 conferir_que("e nao levantou excecao", isinstance(resultado, ResultadoDownload))
 
+print("\n=== limpeza: o que o disco tem, e o que sai dele ===")
+import pipeline
+
+# A pasta nao esta vazia: os testes de storage acima ja guardaram midia nela.
+# Medir a diferenca, e nao o total, evita um teste que quebra sempre que
+# alguem acrescenta um caso la em cima.
+ANTES = len(pipeline._midias_no_disco())
+
+# `_midias_no_disco` e `_apagar` sao a metade da limpeza que nao passa pelo
+# banco. Testadas aqui porque sao logica de disco pura — e porque errar nelas
+# apaga arquivo de verdade.
+for perfil, codigo in (("casa_verde", "AAA"), ("casa_verde", "BBB"),
+                       ("outro_perfil", "CCC")):
+    pasta = config.PERFIS / perfil / codigo
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "midia.mp4").write_bytes(b"x" * 1000)
+    (pasta / "post.json").write_text("{}", encoding="utf-8")
+
+achadas = pipeline._midias_no_disco()
+conferir("acha uma midia por post", len(achadas) - ANTES, 3)
+conferir_que("todas se chamam midia.*",
+             all(c.name.startswith("midia.") for c in achadas))
+conferir_que("post.json NAO entra na conta",
+             all(c.name != "post.json" for c in achadas))
+
+# Uma extensao diferente continua sendo midia: o downloader escolhe o
+# container, e nem todo Reels sai em mp4.
+(config.PERFIS / "casa_verde" / "AAA" / "midia.webm").write_bytes(b"y" * 10)
+conferir("outra extensao tambem conta",
+         len(pipeline._midias_no_disco()) - ANTES, 4)
+
+alvo_midia = config.PERFIS / "outro_perfil" / "CCC" / "midia.mp4"
+conferir("apagar devolve True", pipeline._apagar(alvo_midia), True)
+conferir_que("e o arquivo sumiu", not alvo_midia.exists())
+conferir_que("mas a pasta fica: ainda tem o post.json",
+             alvo_midia.parent.is_dir())
+
+# Com a pasta vazia, ela tambem sai — senao sobra esqueleto de pasta pelo
+# disco inteiro depois de uma limpeza grande.
+(alvo_midia.parent / "post.json").unlink()
+vazia = config.PERFIS / "outro_perfil" / "VAZIA"
+vazia.mkdir(parents=True, exist_ok=True)
+(vazia / "midia.mp4").write_bytes(b"z")
+conferir("apagar a ultima coisa da pasta", pipeline._apagar(vazia / "midia.mp4"), True)
+conferir_que("a pasta vazia some junto", not vazia.exists())
+
+conferir("apagar o que nao existe devolve False, sem estourar",
+         pipeline._apagar(config.PERFIS / "nao" / "existe" / "midia.mp4"), False)
+
 shutil.rmtree(TEMPORARIA, ignore_errors=True)
 
 print("\n" + "=" * 52)

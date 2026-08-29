@@ -43,6 +43,17 @@ def _linha(texto=""):
     print(texto)
 
 
+def _tamanho(bytes_):
+    """Bytes em unidade que uma pessoa lê sem contar zeros."""
+    if not bytes_:
+        return "0 MB"
+    if bytes_ >= 1e9:
+        return "%.2f GB" % (bytes_ / 1e9)
+    if bytes_ >= 1e6:
+        return "%.0f MB" % (bytes_ / 1e6)
+    return "%.0f KB" % (bytes_ / 1e3)
+
+
 def _titulo(texto):
     print("\n" + texto)
     print("-" * len(texto))
@@ -408,8 +419,183 @@ def status(cfg):
         disco = media.total_em_disco(cx)
         if disco["arquivos"]:
             _titulo("Disco")
-            _linha("  %d arquivos, %.0f MB"
-                   % (disco["arquivos"], disco["bytes"] / 1e6))
+            _linha("  %d arquivos, %s no total"
+                   % (disco["arquivos"], _tamanho(disco["bytes"])))
+
+            for linha in media.por_tipo(cx):
+                _linha("    %-10s %3d arquivos  %s"
+                       % (linha["tipo"], linha["arquivos"],
+                          _tamanho(linha["bytes"])))
+
+            pesados = media.por_perfil(cx, limite=5)
+            if len(pesados) > 1:
+                _linha("  quem mais ocupa:")
+                for linha in pesados:
+                    _linha("    %-22s %3d  %s"
+                           % (linha["perfil"], linha["arquivos"],
+                              _tamanho(linha["bytes"])))
+
+            liberavel = media.com_derivado_pronto(cx)
+            bytes_liberaveis = sum(a["file_size"] or 0 for a in liberavel)
+            _linha("  liberável agora: %s (%d vídeo(s) já transcrito(s))"
+                   % (_tamanho(bytes_liberaveis), len(liberavel)))
+            if liberavel:
+                _linha("  -> pipeline.py limpar --transcritos")
+
+            teto = config.dados(cfg)["avisar_acima_de_gb"]
+            if teto and disco["bytes"] > teto * 1e9:
+                _linha()
+                _linha("  AVISO: passou de %g GB (o limite do seu config)."
+                       % teto)
+
+    return 0
+
+
+# ----------------------------------------------------------------- 5. limpar
+
+
+def _midias_no_disco():
+    """Todo `midia.*` que existe em dados/perfis, olhando o disco de verdade."""
+    if not config.PERFIS.is_dir():
+        return []
+    return sorted(caminho for caminho in config.PERFIS.glob("*/*/midia.*")
+                  if caminho.is_file())
+
+
+def _descompasso(cx):
+    """Onde o disco e o banco discordam.
+
+    Dois erros diferentes, com causas diferentes:
+
+    - **registro sem arquivo**: alguém apagou o mp4 por fora. `media.tem()`
+      continua dizendo que existe, e a transcrição vai falhar lá na frente,
+      longe da causa.
+    - **arquivo sem registro**: byte ocupando disco que nenhuma consulta
+      alcança. Foi o caso de `dados/perfis/premiere/` em 28/08 — um post de
+      colaboração cujo dono nunca foi descoberto.
+    """
+    registradas = {Path(chave) for chave in media.chaves_registradas(cx)}
+    no_disco = set(_midias_no_disco())
+
+    return {
+        "registro_sem_arquivo": sorted(registradas - no_disco),
+        "arquivo_sem_registro": sorted(no_disco - registradas),
+    }
+
+
+def _apagar(caminho):
+    """Apaga o arquivo e a pasta do post, se ela ficar vazia."""
+    caminho = Path(caminho)
+    try:
+        caminho.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as erro:
+        _linha("    nao consegui apagar %s: %s" % (caminho.name, erro))
+        return False
+
+    pasta = caminho.parent
+    try:
+        if pasta.is_dir() and not any(pasta.iterdir()):
+            pasta.rmdir()
+    except OSError:
+        pass
+    return True
+
+
+def limpar(cfg, transcritos=False, orfas=False, antes_de=None, aplicar=False):
+    """O que dá para liberar do disco — e, só com --aplicar, libera.
+
+    Seco por padrão, pela mesma disciplina do freio de custo da Apify: mostra
+    a conta antes de cobrar. A diferença é que aqui a conta é irreversível — o
+    mp4 volta por download, mas o download custa tempo e a Apify custa dinheiro.
+
+    Sem nenhum alvo escolhido, relata os dois e não apaga nada.
+    """
+    so_relatorio = not (transcritos or orfas)
+    _titulo("Limpeza de disco")
+
+    with db.conectar(cfg) as cx:
+        disco = media.total_em_disco(cx)
+        _linha("  hoje: %d arquivos, %s"
+               % (disco["arquivos"], _tamanho(disco["bytes"])))
+
+        liberaveis = media.com_derivado_pronto(cx, dias=antes_de)
+        bytes_liberaveis = sum(a["file_size"] or 0 for a in liberaveis)
+
+        _titulo("Vídeos já transcritos")
+        if antes_de:
+            _linha("  (só os baixados há mais de %d dias)" % antes_de)
+        if not liberaveis:
+            _linha("  nenhum. Só some do disco o que já virou transcrição —")
+            _linha("  o mp4 é re-baixável, a transcrição não.")
+        else:
+            for arquivo in liberaveis[:20]:
+                _linha("    %-22s %-13s %s"
+                       % (arquivo["username"], arquivo["platform_content_id"],
+                          _tamanho(arquivo["file_size"] or 0)))
+            if len(liberaveis) > 20:
+                _linha("    ... e mais %d" % (len(liberaveis) - 20))
+            _linha("  total: %d vídeo(s), %s"
+                   % (len(liberaveis), _tamanho(bytes_liberaveis)))
+
+        fora = _descompasso(cx)
+
+        _titulo("Descompasso entre disco e banco")
+        sem_arquivo = fora["registro_sem_arquivo"]
+        sem_registro = fora["arquivo_sem_registro"]
+
+        if not sem_arquivo and not sem_registro:
+            _linha("  nenhum. Disco e banco contam a mesma história.")
+        if sem_arquivo:
+            _linha("  %d registro(s) apontando para arquivo que sumiu:"
+                   % len(sem_arquivo))
+            for caminho in sem_arquivo[:10]:
+                _linha("    %s" % caminho)
+        if sem_registro:
+            ocupado = sum(c.stat().st_size for c in sem_registro)
+            _linha("  %d arquivo(s) que nenhuma consulta alcança (%s):"
+                   % (len(sem_registro), _tamanho(ocupado)))
+            for caminho in sem_registro[:10]:
+                _linha("    %s" % caminho.relative_to(config.PERFIS))
+
+        if so_relatorio:
+            _linha()
+            _linha("Nada foi apagado. Escolha o alvo para agir:")
+            _linha("  pipeline.py limpar --transcritos --aplicar")
+            _linha("  pipeline.py limpar --orfas --aplicar")
+            return 0
+
+        if not aplicar:
+            _linha()
+            _linha("Nada foi apagado — faltou --aplicar.")
+            return 0
+
+        # --------------------------------------------------------- aplicando
+        _titulo("Apagando")
+        apagados, liberado = 0, 0
+
+        if transcritos:
+            for arquivo in liberaveis:
+                if _apagar(arquivo["storage_key"]):
+                    media.esquecer(cx, arquivo["id"])
+                    apagados += 1
+                    liberado += arquivo["file_size"] or 0
+
+        if orfas:
+            for caminho in sem_registro:
+                tamanho = caminho.stat().st_size
+                if _apagar(caminho):
+                    apagados += 1
+                    liberado += tamanho
+            for caminho in sem_arquivo:
+                for asset in media.registros_da_chave(cx, str(caminho)):
+                    media.esquecer(cx, asset["id"])
+                    _linha("    registro órfão removido: %s" % caminho.name)
+
+        cx.commit()
+        _linha("  %d arquivo(s) apagado(s), %s liberado(s)"
+               % (apagados, _tamanho(liberado)))
 
     return 0
 
@@ -532,6 +718,16 @@ def ler_argumentos(argv=None):
     c.add_argument("--so-aprovados", action="store_true")
     c.add_argument("--forcar", action="store_true")
 
+    lp = sub.add_parser("limpar", help="o que dá para liberar do disco")
+    lp.add_argument("--transcritos", action="store_true",
+                    help="mídia cujo conteúdo já tem transcrição")
+    lp.add_argument("--orfas", action="store_true",
+                    help="descompasso entre disco e banco")
+    lp.add_argument("--antes-de", type=int, dest="antes_de", metavar="DIAS",
+                    help="só o que foi baixado há mais de N dias")
+    lp.add_argument("--aplicar", action="store_true",
+                    help="apagar de verdade. Sem isto, só relata.")
+
     b = sub.add_parser("baixar", help="fila -> vídeo no disco")
     b.add_argument("--limite", type=int)
     b.add_argument("--concorrencia", type=int)
@@ -572,6 +768,9 @@ def main(argv=None):
             return status(cfg)
         if args.comando == "ranking":
             return ranking(cfg, args.nicho, args.limite)
+        if args.comando == "limpar":
+            return limpar(cfg, args.transcritos, args.orfas, args.antes_de,
+                          args.aplicar)
         if args.comando == "schema":
             return schema(cfg, args.nicho)
     except config.ErroDeConfig as erro:

@@ -4,6 +4,96 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-08-29 — organização: sem Docker, com git, e o bug do emoji
+
+O pedido era Docker, para "organizar os arquivos e o banco". A medição inverteu
+a conclusão: **PostgreSQL nativo custa 17 MB**; Docker Desktop + WSL2 custaria
+~1,2 GB numa máquina com **521 MB livres**. Seria trocar 17 MB por 1,2 GB para
+substituir justamente a peça que funciona. Decisão do usuário, com o número na
+mão: sem Docker. Registrada na [ADR 006](docs/decisions/006-postgres-nativo-em-vez-de-docker.md),
+com prazo de validade — vale enquanto a máquina for esta.
+
+Os incômodos por trás do pedido eram reais, e as causas não tinham nada a ver
+com contêiner.
+
+#### Reprodutibilidade: o clone novo não subia
+
+Três bloqueios em sequência, todos removidos:
+
+- **O portão morto.** `config.carregar()` exigia `instagram.usuario` e mandava
+  "use a conta descartável". A ADR 005 tirou a conta do projeto em 26/08, e
+  `usuario_instagram()` estava sem um único chamador. Era um portão trancado
+  por uma chave que não existe mais — e `tests/_pg.py` também passava por ele,
+  então **nem os testes rodavam em máquina limpa**. No lugar entrou
+  `_exigir_postgres()`, que cobra o que de fato é obrigatório.
+- **`config.local.example.json` não tinha a seção `postgres`.** Ganhou ela e a
+  seção `dados`; perdeu a `instagram`.
+- **Não havia caminho para montar o banco** desde que o `instalar-postgres.ps1`
+  foi apagado. Entrou `src/preparar.py`: `verificar` faz 7 checagens e diz o
+  conserto de cada uma; `criar-banco` cria e migra. **Verifica e instrui, não
+  instala** (§14).
+
+**Provado em clone limpo de verdade**, em pasta temporária: sem
+`config.local.json`, apontou o que faltava e não pediu conta do Instagram; com
+o exemplo copiado, apontou a senha do Postgres como único bloqueio restante.
+
+#### O projeto virou um repositório
+
+Existia `.gitignore`, não existia `.git` — impedimento que a T9 já registrava
+("não haveria como desfazer"). Primeiro commit: **78 arquivos, 12.248 linhas**,
+com `git check-ignore` conferido antes para provar que `config.local.json`,
+`.venv/`, `dados/*` e `.sessoes/` ficaram de fora. Mais `.gitattributes`
+fixando LF, para o git do Windows não inventar sessenta arquivos modificados.
+
+#### BUG: o ranking quebrava no primeiro colocado
+
+A simulação de clone limpo derrubou o `preparar.py` com `UnicodeEncodeError`.
+Puxando o fio, apareceu coisa pior: **`pipeline.py ranking` quebrava com
+traceback em qualquer legenda com emoji** — quase toda legenda de Instagram.
+
+O erro morria em `'🍓'`, o morango de *"Morango Cravejado 🍓"*, que era
+o **primeiro colocado** do ranking. O comando quebrava exatamente no melhor
+resultado.
+
+Por que ninguém viu: toda conferência da sessão em que o ranking nasceu rodou
+com `PYTHONIOENCODING=utf-8` no ambiente. **A variável mascarava a falha.**
+Fica a lição — variável conveniente no terminal de quem desenvolve é uma forma
+de não testar o que o usuário vai rodar.
+
+Conserto: `src/console.py`, chamado no início de cada `main()` dos sete
+comandos. UTF-8 com `errors="replace"` de rede: relatório feio é melhor que
+relatório que não sai. Vale sobretudo para o `preparar.py`, que existe para
+dizer o que está errado.
+
+#### Arquivos sob controle
+
+`media_assets` já tinha `storage_key`, `file_size`, `asset_type` e
+`created_at` — **nenhuma migration foi necessária**, só leitura e um comando.
+
+- **`pipeline.py limpar`, seco por padrão.** Só apaga com `--aplicar`, pela
+  mesma disciplina do freio de custo da Apify: mostra a conta antes de cobrar.
+  Alvos: `--transcritos` (mídia cujo conteúdo já virou transcrição),
+  `--orfas` (descompasso disco↔banco), `--antes-de N`.
+- **A regra que decide o que pode sumir:** só o que já tem transcrição. O mp4
+  é re-baixável pelo link; a transcrição custou CPU e não volta.
+- **Apagar o arquivo apaga o registro** — `media.tem()` é a checagem de
+  idempotência, e uma linha apontando para arquivo inexistente faz o sistema
+  mentir. Mas **não devolve o vídeo para a fila**: o job continua `done`, senão
+  a limpeza vira moto-contínuo caro. Há teste para as duas afirmações.
+- **Reconciliação nos dois sentidos**: registro sem arquivo e arquivo sem
+  registro.
+- **`status` diz para onde o disco foi**: quebra por tipo, os 5 perfis mais
+  pesados, quanto dá para liberar agora, e aviso ao passar do teto do config.
+- **`config.dados()`** — retenção em configuração, tudo desligado por padrão.
+
+#### Números
+
+- **574 conferências, zero falhas** (eram 488 na abertura do dia), em 11
+  arquivos. Dois novos: `test_preparar.py` e `test_repos_arquivos.py`.
+- `limpar` rodado seco contra os 15 vídeos reais: 0 liberáveis (nada transcrito
+  ainda), nenhum descompasso, e **os 15 arquivos continuam no disco** —
+  conferido por `find` antes e depois.
+
 ### 2026-08-28 (2) — a esteira do MVP contra o ambiente real, e o `-1`
 
 Primeira rodada de ponta a ponta com dados reais desde a migração. Nicho

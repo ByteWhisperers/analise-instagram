@@ -157,6 +157,51 @@ try:
     p.conferir("com métrica", c["com_metrica"], 2)
     p.conferir("nenhum baixado ainda", c["baixados"], 0)
 
+    p.secao("T13: o post fixado")
+
+    # `[MEDIDO 30/08/2026]` O fixado escapa do `onlyPostsNewerThan`: pedindo 30
+    # dias vieram 2 posts de fora, e eram exatamente os 2 `isPinned` — um de
+    # 2024, com 6,9M de views. Sem esta coluna, ele entra numa media de janela
+    # fingindo ser recente.
+    fixado_id = contents.salvar(
+        cx, dict(REEL, id="PINNED01", fixado=True,
+                 data_utc="2024-10-09T12:00:00+00:00"), perfil)
+    p.conferir("post fixado grava is_pinned",
+               cx.execute("SELECT is_pinned FROM contents WHERE id = %s",
+                          (fixado_id,)).fetchone()[0], True)
+
+    p.conferir("post comum grava False, e nao NULL",
+               cx.execute("SELECT is_pinned FROM contents WHERE id = %s",
+                          (contents.salvar(cx, dict(REEL, id="COMUM01",
+                                                    fixado=False), perfil),)
+                          ).fetchone()[0], False)
+
+    p.conferir("post sem o campo fica NULL: nao saber nao e saber que nao",
+               cx.execute("SELECT is_pinned FROM contents WHERE id = %s",
+                          (contents.salvar(cx, dict(REEL, id="MUDO01"), perfil),)
+                          ).fetchone()[0], None)
+
+    # O eixo `posts` nem sempre traz `isPinned`. Se recoletar apagasse a marca,
+    # o post voltaria a se passar por recente na coleta seguinte.
+    contents.salvar(cx, dict(REEL, id="PINNED01"), perfil)
+    p.conferir("recoletar SEM o campo nao apaga a marca (COALESCE)",
+               cx.execute("SELECT is_pinned FROM contents WHERE id = %s",
+                          (fixado_id,)).fetchone()[0], True)
+
+    contents.salvar(cx, dict(REEL, id="PINNED01", fixado=False), perfil)
+    p.conferir("mas desfixar de verdade desmarca",
+               cx.execute("SELECT is_pinned FROM contents WHERE id = %s",
+                          (fixado_id,)).fetchone()[0], False)
+
+    p.conferir_que(
+        "a view expoe o campo, para o ranking poder separar",
+        cx.execute("SELECT is_pinned FROM v_content_current WHERE code = %s",
+                   ("PINNED01",)).fetchone() is not None)
+
+    for codigo in ("PINNED01", "COMUM01", "MUDO01"):
+        cx.execute("DELETE FROM contents WHERE platform_content_id = %s",
+                   (codigo,))
+
     p.secao("apagar o perfil leva tudo junto")
 
     cx.execute("DELETE FROM profiles WHERE id = %s", (perfil,))

@@ -29,6 +29,7 @@ from pathlib import Path
 import coletor as mod_coletor
 import console
 import config
+import mapeador
 import db
 import desempenho
 from downloader import YtDlpDownloader
@@ -105,13 +106,399 @@ def _registrar_custo(conexao, operacao, coleta, coleta_id):
 # -------------------------------------------------------------- 1. descobrir
 
 
-def descobrir(cfg, nicho, max_perfis=None, forcar=False):
+
+# --------------------------------------------------------------- 0. mapear
+
+
+def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
+           itens_por_tag=None, aplicar=False):
+    """Tema em portugues comum -> vocabulario, perfis-semente e numeros.
+
+    A fase que faltava. Ate a T13 o sistema so sabia buscar: voce ja sabia o
+    termo, pedia, recebia. Com "desastres e tragedias" isso quebra na primeira
+    linha, porque `#desastres` provavelmente nao e onde esse conteudo vive — o
+    input que o comando exige e justamente o output que ainda nao se tem.
+
+    **Seco por padrao**, como o `limpar`: sem `--aplicar` nao escreve nem um
+    nicho, nem um termo, nem um perfil. O que ele grava sempre e o JOB e o
+    CUSTO — dinheiro gasto se registra mesmo quando o resultado e descartado,
+    senao a conta do mes nao fecha.
+    """
+    if aplicar:
+        return _mapear_aplicar(cfg, tema)
+
     apify = config.apify(cfg)
-    max_perfis = max_perfis or apify["max_perfis"]
+    mapa = config.mapeamento(cfg)
+
+    teto_usd = teto_usd or mapa["teto_usd"]
+    rodadas = rodadas or mapa["rodadas"]
+    saturacao = saturacao or mapa["saturacao"]
+    itens_por_tag = itens_por_tag or mapa["itens_por_tag"]
+
+    sementes = mapeador.sementes_do_tema(tema)
+    if not sementes:
+        _linha("Tema vazio. Diga do que voce quer perfis.")
+        return 1
+
+    _titulo("0. Mapeamento do tema: %r" % tema)
+    _mostrar_criterios([
+        ("sementes", ", ".join("#" + t for t in sementes)),
+        ("teto", "US$ %.2f" % teto_usd),
+        ("rodadas", rodadas),
+        ("satura em", "%d%% de novidade" % (saturacao * 100)),
+        ("itens por tag", itens_por_tag),
+    ])
+
+    coletor = _montar_coletor(cfg)
+    por_rodada = float(costs.custo_apify(itens_por_tag, apify["plano"]))
+
+    contagens, perfis, posts = {}, {}, []
+    visitadas, expandidos = set(), set()
+    # O teto conta pela ESTIMATIVA e nao pelo custo real: o real so chega
+    # depois da rodada, e depois e tarde para nao gastar. Numa sonda de
+    # 30/08/2026 a Apify devolveu US$ 0.0000 numa rodada com 3 itens — teto que
+    # contasse por ali nunca fecharia.
+    estimado = real = 0.0
+    parou_por = "rodadas"
+
+    with db.conectar(cfg) as cx:
+        coleta_id = jobs.abrir_coleta(cx, "niche_mapping", "apify",
+                                      ator=coletor.actor)
+        cx.commit()
+
+        def _cabe(reserva=0.0):
+            """Cabe mais uma chamada, guardando `reserva` para depois?
+
+            A exploracao roda com uma chamada de reserva no bolso, para a
+            MEDICAO do fim nunca ficar sem orcamento. Na rodada de 30/08/2026
+            ela ficou: o laco gastou US$ 0,324 de 0,35 explorando, e a banda
+            sugerida saiu de 6 perfis que por acaso tinham numero. Explorar
+            mais um pouco vale menos que saber de quem se esta falando.
+            """
+            return estimado + por_rodada + reserva <= teto_usd + 1e-9
+
+        for rodada in range(1, rodadas + 1):
+            if rodada == 1:
+                # Todas as sementes entram na fila, mas o laco abaixo para na
+                # primeira que render vocabulario: as rodadas seguintes alargam
+                # a partir dela, e nao ha por que pagar por todas as portas de
+                # entrada quando uma ja abriu.
+                alvos = list(sementes)
+            else:
+                alvos = [linha["termo"] for linha
+                         in mapeador.ranquear_termos(contagens)
+                         if linha["termo"] not in visitadas
+                         ][:mapa["tags_por_rodada"]]
+
+            if not alvos and rodada > 1:
+                parou_por = "acabaram as tags novas"
+                break
+
+            _linha("Rodada %d: %s" % (rodada, ", ".join("#" + t for t in alvos)))
+            antes = set(contagens)
+
+            for tag in alvos:
+                if not _cabe(reserva=por_rodada):
+                    parou_por = "teto"
+                    break
+                try:
+                    coleta = coletor.mapear_tag(tag, itens_por_tag)
+                except mod_coletor.ErroDeColeta as erro:
+                    _linha("  #%s falhou: %s" % (tag, erro))
+                    visitadas.add(tag)
+                    continue
+
+                visitadas.add(tag)
+                estimado += por_rodada
+                real += coleta.custo_usd or 0
+                contagens = mapeador.fundir_contagens(
+                    contagens,
+                    mod_coletor.tags_dos_itens(coleta.brutos, fonte="#" + tag))
+                for perfil in coleta.perfis:
+                    perfis.setdefault(perfil["usuario"], {}).update(perfil)
+                posts.extend(coleta.posts)
+                _linha("  #%-24s %2d itens, %3d termos no total"
+                       % (tag, coleta.itens, len(contagens)))
+
+                # A semente que nao rendeu nada nao e o fim do mapeamento: e so
+                # uma porta que nao abriu. `#desastresetragedias` devolveu zero
+                # termos em 30/08/2026 — `#desastres` e `#tragedias` e que sao
+                # as portas. Com vocabulario na mao, para de tentar sementes.
+                if rodada == 1 and contagens:
+                    break
+
+            # Eixo 2: parte de um perfil que ja apareceu, e nao de uma palavra.
+            # `[MEDIDO 30/08/2026]` @receitasdepai devolveu 15 relacionados.
+            candidatos = [u for u in perfis if u not in expandidos]
+            if parou_por != "teto" and candidatos and _cabe(reserva=por_rodada):
+                alvos_perfis = candidatos[:mapa["perfis_para_expandir"]]
+                try:
+                    relacoes, coleta = coletor.relacionados_de(alvos_perfis)
+                except mod_coletor.ErroDeColeta as erro:
+                    _linha("  relacionados falharam: %s" % erro)
+                    relacoes, coleta = {}, mod_coletor.Coleta()
+
+                expandidos.update(alvos_perfis)
+                estimado += por_rodada
+                real += coleta.custo_usd or 0
+                contagens = mapeador.fundir_contagens(
+                    contagens,
+                    mod_coletor.tags_dos_itens(coleta.brutos,
+                                               fonte="relacionados"))
+                for perfil in coleta.perfis:
+                    perfis.setdefault(perfil["usuario"], {}).update(perfil)
+
+                novos = 0
+                for dono, parecidos in relacoes.items():
+                    for parecido in parecidos:
+                        if parecido not in perfis:
+                            # Vem SEM contagem de seguidores — conferido. Fica
+                            # indeterminado ate alguem qualificar.
+                            perfis[parecido] = {"usuario": parecido,
+                                                "fonte": "relacionado de @%s"
+                                                         % dono}
+                            novos += 1
+                _linha("  relacionados de %d perfil(is): %d nomes novos"
+                       % (len(alvos_perfis), novos))
+
+            if parou_por == "teto":
+                break
+            if mapeador.saturou(antes, set(contagens), saturacao):
+                parou_por = "saturacao"
+                break
+
+        # MEDIR, que e diferente de descobrir. O perfil que veio da aba da tag
+        # nao traz contagem de seguidores — conferido em 30/08/2026, nem com
+        # `addParentData`. Sem esta chamada a "banda sugerida" sai de qualquer
+        # punhado de perfis que por acaso tinha numero, e uma banda medida
+        # sobre tres contas de 100 seguidores nao serve para nada.
+        sem_numero = [u for u, p in perfis.items()
+                      if p.get("seguidores") is None]
+        if sem_numero and _cabe():   # aqui sem reserva: esta E a reserva
+            fila = sem_numero[:mapa["perfis_para_medir"]]
+            _linha("Medindo %d perfil(is) para a distribuicao..." % len(fila))
+            try:
+                medidos = coletor.qualificar(fila)
+            except mod_coletor.ErroDeColeta as erro:
+                _linha("  a medicao falhou: %s" % erro)
+                medidos = mod_coletor.Coleta()
+            estimado += por_rodada
+            real += medidos.custo_usd or 0
+            for perfil in medidos.perfis:
+                perfis.setdefault(perfil["usuario"], {}).update(perfil)
+            com_numero = sum(1 for p in perfis.values()
+                             if p.get("seguidores") is not None)
+            _linha("  %d perfil(is) com contagem de seguidores" % com_numero)
+
+        jobs.fechar_coleta(cx, coleta_id, encontrados=len(contagens),
+                           criados=0, atualizados=0)
+        _registrar_custo(cx, "niche_mapping",
+                         mod_coletor.Coleta(itens=len(contagens),
+                                            custo_usd=real), coleta_id)
+        cx.commit()
+
+    dossie = mapeador.montar_dossie(tema, contagens, list(perfis.values()),
+                                    posts, custo_usd=real,
+                                    rodadas=rodada, parou_por=parou_por)
+    destino = mapeador.gravar_dossie(dossie)
+
+    _linha()
+    _linha("Parou por: %s. %d termos, %d perfis."
+           % (parou_por, len(contagens), len(perfis)))
+    _linha("Custo estimado US$ %.4f (teto US$ %.2f) | real US$ %.4f"
+           % (estimado, teto_usd, real))
+    _linha()
+    _linha("As 10 mais fortes (por PERFIS distintos, nao por frequencia):")
+    for linha in dossie["tags"][:10]:
+        _linha("  #%-26s %2d perfis  %3d posts" % (linha["termo"],
+                                                   linha["perfis"],
+                                                   linha["posts"]))
+    banda = dossie["numeros"]["banda_sugerida"]
+    _linha()
+    _linha("Banda sugerida: %s a %s seguidores"
+           % (banda["seguidores_min"], banda["seguidores_max"]))
+    _linha("  (%s)" % banda["por_que"])
+    _linha()
+    _linha("Nada foi gravado no banco. Abra o dossie, marque \"entra\": true")
+    _linha("no que presta, e rode:")
+    _linha('  python src/pipeline.py mapear "%s" --aplicar' % tema)
+    _linha("Dossie: %s" % destino)
+    return 0
+
+
+def _mapear_aplicar(cfg, tema):
+    """Le o dossie editado e grava so o que voce marcou.
+
+    Os REPROVADOS tambem entram em `niche_terms`, com `is_approved = false`.
+    Parece contradizer "grava so o aprovado", mas nao: reprovado gravado nao
+    vira criterio de busca nenhum — ele so impede que o proximo mapeamento
+    volte a te oferecer a mesma tag de propaganda para julgar de novo.
+    """
+    try:
+        dossie = mapeador.ler_dossie(tema)
+    except mapeador.ErroDeMapeamento as erro:
+        _linha(str(erro))
+        return 1
+
+    tags = dossie.get("tags") or []
+    perfis = dossie.get("perfis") or []
+    tags_sim = mapeador.aprovados(dossie, "tags")
+    perfis_sim = mapeador.aprovados(dossie, "perfis")
+
+    _titulo("0. Aplicar o mapeamento: %r" % tema)
+
+    if not tags_sim and not perfis_sim:
+        _linha("Nenhum item marcado com \"entra\": true no dossie.")
+        _linha("Abra %s e marque o que presta." % mapeador.caminho_do_dossie(tema))
+        return 1
+
+    with db.conectar(cfg) as cx:
+        nicho_id = niches.obter_ou_criar(
+            cx, tema, palavras_chave=[t["termo"] for t in tags_sim])
+
+        for linha in tags:
+            niches.salvar_termo(cx, nicho_id, linha["termo"],
+                                perfis=linha.get("perfis", 0),
+                                posts=linha.get("posts", 0),
+                                fonte=linha.get("fonte"),
+                                aprovado=bool(linha.get("entra")))
+
+        banda = (dossie.get("numeros") or {}).get("banda_sugerida") or {}
+        criterios = {c: banda.get(c) for c in ("seguidores_min",
+                                               "seguidores_max")
+                     if banda.get(c) is not None}
+        if criterios:
+            criterios["origem"] = "mapeamento de %s" % dossie.get("gerado_em")
+            niches.salvar_criterios(cx, nicho_id, criterios)
+
+        aprovados_perfis = 0
+        for linha in perfis_sim:
+            usuario = linha.get("usuario")
+            if not usuario:
+                continue
+            perfil_id = profiles.salvar(cx, {"usuario": usuario,
+                                             "seguidores": linha.get("seguidores")},
+                                        fonte="mapeamento")
+            profiles.ligar_ao_nicho(cx, perfil_id, nicho_id, "mapeamento")
+            profiles.classificar(cx, perfil_id, aprovado=True)
+            aprovados_perfis += 1
+
+        cx.commit()
+
+    _linha("%d tag(s) aprovada(s), %d reprovada(s) e registradas como tal."
+           % (len(tags_sim), len(tags) - len(tags_sim)))
+    _linha("%d perfil(is) aprovado(s) e ligado(s) ao nicho." % aprovados_perfis)
+    if criterios:
+        _linha("Banda do nicho: %s a %s seguidores — passa a valer sobre o "
+               "config." % (criterios.get("seguidores_min"),
+                            criterios.get("seguidores_max")))
+    _linha()
+    _linha("Agora a busca usa o vocabulario aprovado:")
+    _linha('  python src/pipeline.py descobrir "%s" --eixos hashtag' % tema)
+    return 0
+
+
+def _do_nicho(cfg, nicho):
+    """O que o MAPEAMENTO aprendeu sobre este nicho: criterios e tags.
+
+    Devolve `({}, [])` quando o nicho nao existe ou nunca foi mapeado — e a
+    resposta honesta para "quais os criterios proprios deste nicho?" antes de
+    alguem ter medido. O global do config assume, como sempre assumiu.
+
+    Isto fecha a precedencia em quatro niveis:
+
+        flag  >  nicho (banco)  >  global (config)  >  padrao (codigo)
+
+    O nicho fica no meio de proposito: ele foi MEDIDO, entao vale mais que o
+    palpite global; mas a flag continua ganhando, porque quem esta no terminal
+    sabe o que quer daquela rodada.
+    """
+    if not nicho:
+        return {}, []
+
+    with db.conectar(cfg) as cx:
+        achado = niches.por_nome(cx, nicho)
+        if not achado:
+            return {}, []
+        return (niches.criterios(cx, achado["id"]),
+                niches.tags_aprovadas(cx, achado["id"]))
+
+
+def _faixa(texto):
+    """"10000-500000" -> (10000, 500000). "-500000" e "10000-" tambem valem.
+
+    Existe para a banda caber numa flag so. Duas flags separadas convidam ao
+    erro de passar so uma e achar que passou as duas.
+    """
+    if not texto:
+        return None, None
+    partes = str(texto).split("-")
+    if len(partes) != 2:
+        raise ValueError(
+            "Faixa em formato errado: %r. Use MIN-MAX, por exemplo "
+            "10000-500000 (qualquer um dos lados pode ficar vazio)." % texto)
+    minimo = int(partes[0]) if partes[0].strip() else None
+    maximo = int(partes[1]) if partes[1].strip() else None
+    return minimo, maximo
+
+
+def _mostrar_criterios(criterios):
+    """Imprime o que ESTA valendo nesta rodada.
+
+    Nao e enfeite. Estas variaveis vem de tres lugares — flag, config e padrao
+    do codigo — e ate 30/08/2026 o `config.local.json` tinha uma secao `busca`
+    com `min_seguidores` que NINGUEM lia. A config prometia um filtro que nao
+    acontecia, e nada na tela denunciava. Agora denuncia.
+    """
+    _linha("Critérios desta rodada:")
+    for rotulo, valor in criterios:
+        _linha("  %-18s %s" % (rotulo, valor))
+    _linha()
+
+
+def descobrir(cfg, nicho, max_perfis=None, forcar=False, eixos=None,
+              seguidores=None, max_qualificar=None):
+    apify = config.apify(cfg)
+    criterios = config.descoberta(cfg)
+    do_nicho, tags_do_nicho = _do_nicho(cfg, nicho)
+
+    # A precedencia, no unico lugar onde ela existe: a flag ganha da config, a
+    # config ganha do padrao. `or` resolve porque nenhum destes tem zero como
+    # valor legitimo — descobrir 0 perfis nao e pedido de ninguem.
+    max_perfis = max_perfis or criterios["max_perfis"] or apify["max_perfis"]
+    eixos = eixos or criterios["eixos"]
+    max_qualificar = max_qualificar or criterios["max_qualificar"]
+
+    if seguidores:
+        minimo, maximo = _faixa(seguidores)
+    else:
+        # O nicho mapeado ganha do global: a banda dele saiu de percentis
+        # medidos, e a global saiu de intuicao.
+        minimo = do_nicho.get("seguidores_min", criterios["seguidores_min"])
+        maximo = do_nicho.get("seguidores_max", criterios["seguidores_max"])
 
     _titulo("1. Descoberta de perfis: %r" % nicho)
+    # O eixo de hashtag deixa de adivinhar a tag pelo nome do nicho. "apostas"
+    # nao vive em #apostas; vive em #tigrinho e #cassino, e quem sabe disso e o
+    # mapeamento.
+    alvos_de_tag = tags_do_nicho[:criterios["max_tags_por_rodada"]] or [nicho]
 
-    estimado = float(costs.custo_apify(max_perfis, apify["plano"]))
+    _mostrar_criterios([
+        ("eixos", ", ".join(eixos)),
+        ("tags do nicho", ", ".join("#" + t for t in alvos_de_tag)
+                          if tags_do_nicho else
+                          "nenhuma mapeada — usando o nome do nicho"),
+        ("banda vem de", "nicho mapeado" if do_nicho else "config global"),
+        ("seguidores", "%s a %s"
+                       % (minimo if minimo is not None else "sem minimo",
+                          maximo if maximo is not None else "sem maximo")),
+        ("so publicos", "sim" if criterios["somente_publicos"] else "nao"),
+        ("teto de perfis", max_perfis),
+        ("qualificar ate", max_qualificar),
+    ])
+
+    chamadas = sum(len(alvos_de_tag) if e == "hashtag" else 1 for e in eixos)
+    estimado = float(costs.custo_apify(max_perfis * chamadas, apify["plano"]))
     if not _confirmar_gasto(estimado, apify["avisar_acima_de_usd"], forcar):
         return 1
 
@@ -123,18 +510,86 @@ def descobrir(cfg, nicho, max_perfis=None, forcar=False):
                                       ator=coletor.actor, nicho_id=nicho_id)
         cx.commit()
 
-        try:
-            coleta = coletor.descobrir_perfis(nicho, max_perfis)
-        except mod_coletor.ErroDeColeta as erro:
-            jobs.fechar_coleta(cx, coleta_id, status=jobs.FALHA, erro=str(erro))
-            cx.commit()
-            _linha("FALHOU: %s" % erro)
-            return 1
+        achados, custo, itens, run_id = [], 0.0, 0, None
+        vistos = set()
 
-        novos = 0
-        for perfil in coleta.perfis:
+        for eixo in eixos:
+            # Um eixo pode render varias chamadas: com vocabulario mapeado, a
+            # hashtag roda uma vez por tag aprovada.
+            alvos = alvos_de_tag if eixo == "hashtag" else [nicho]
+            _linha("Eixo %r (%d chamada(s))..." % (eixo, len(alvos)))
+
+            for alvo in alvos:
+                try:
+                    coleta = coletor.descobrir_perfis(alvo, max_perfis,
+                                                      eixo=eixo)
+                except mod_coletor.ErroDeColeta as erro:
+                    jobs.fechar_coleta(cx, coleta_id, status=jobs.FALHA,
+                                       erro=str(erro))
+                    cx.commit()
+                    _linha("FALHOU no eixo %r (%r): %s" % (eixo, alvo, erro))
+                    return 1
+
+                custo += coleta.custo_usd or 0
+                itens += coleta.itens
+                run_id = coleta.run_id or run_id
+                for perfil in coleta.perfis:
+                    if perfil.get("usuario") in vistos:
+                        continue
+                    vistos.add(perfil.get("usuario"))
+                    perfil.setdefault("nicho", nicho)
+                    achados.append(perfil)
+                _linha("  %-24s %d perfis, %d itens"
+                       % (alvo, len(coleta.perfis), coleta.itens))
+
+        # Quem veio da hashtag nao tem contagem de seguidores — o item da tag
+        # nao traz, conferido em 30/08/2026, nem com `addParentData`. Sem esta
+        # etapa todo candidato de hashtag ficaria indeterminado, e a banda nao
+        # decidiria nada.
+        indefinidos = [
+            p["usuario"] for p in achados
+            if mod_coletor.na_banda(p, minimo, maximo,
+                                    criterios["somente_publicos"]) is None]
+
+        if indefinidos:
+            fila = indefinidos[:max_qualificar]
+            _linha()
+            _linha("%d candidato(s) sem contagem de seguidores. Qualificando "
+                   "%d (teto)." % (len(indefinidos), len(fila)))
+            try:
+                extra = coletor.qualificar(fila)
+            except mod_coletor.ErroDeColeta as erro:
+                _linha("A qualificacao falhou: %s" % erro)
+                extra = mod_coletor.Coleta()
+            custo += extra.custo_usd or 0
+            itens += extra.itens
+            por_usuario = {p.get("usuario"): p for p in extra.perfis}
+            achados = [dict(p, **por_usuario.get(p.get("usuario"), {}))
+                       for p in achados]
+
+        novos, fora, ja_tinha, gravados = 0, 0, 0, 0
+        for perfil in achados:
+            usuario = perfil.get("usuario")
+            existente = profiles.id_por_usuario(cx, usuario) if usuario else None
+
+            if existente is None:
+                veredito = mod_coletor.na_banda(perfil, minimo, maximo,
+                                                criterios["somente_publicos"])
+                if veredito is not True:
+                    # Indeterminado tambem fica de fora: perfil novo sem numero
+                    # nenhum e linha que ninguem sabe julgar, e o banco ja tem
+                    # uma dessas — `premiere`, criada sem nicho em 28/08.
+                    fora += 1
+                    continue
+            else:
+                # Perfil que JA ESTA no banco nao passa pela banda. Decisao do
+                # usuario em 30/08/2026: a banda vale para descoberta nova; os
+                # 9 que ja estavam ficam, mesmo os 6 que ela reprovaria.
+                ja_tinha += 1
+
             perfil_id = profiles.salvar(cx, perfil, fonte="apify",
-                                        ator=coletor.actor, run_id=coleta.run_id)
+                                        ator=coletor.actor, run_id=run_id)
+            gravados += 1
             if profiles.ligar_ao_nicho(cx, perfil_id, nicho_id, "busca"):
                 novos += 1
             # A foto de agora. Gravada já na primeira vez, quando ainda não
@@ -145,18 +600,21 @@ def descobrir(cfg, nicho, max_perfis=None, forcar=False):
                                      conteudos=perfil.get("posts"),
                                      job_id=coleta_id)
 
-        jobs.fechar_coleta(cx, coleta_id, encontrados=coleta.itens,
-                           criados=novos,
-                           atualizados=len(coleta.perfis) - novos,
-                           run_id=coleta.run_id)
-        _registrar_custo(cx, "profile_collection", coleta, coleta_id)
+        jobs.fechar_coleta(cx, coleta_id, encontrados=itens, criados=novos,
+                           atualizados=max(gravados - novos, 0), run_id=run_id)
+        _registrar_custo(cx, "profile_collection",
+                         mod_coletor.Coleta(itens=itens, custo_usd=custo,
+                                            run_id=run_id), coleta_id)
         cx.commit()
 
-    _linha("%d perfis (%d novos no nicho). Custo real: US$ %.4f (%d itens)"
-           % (len(coleta.perfis), novos, coleta.custo_usd or 0, coleta.itens))
     _linha()
-    _linha("Nenhum foi julgado relevante ainda — a busca acha quem tem a")
-    _linha("palavra no nome, não quem performa. Confira: pipeline.py status")
+    _linha("%d achados: %d gravados (%d novos no nicho, %d ja existiam), "
+           "%d fora da banda."
+           % (len(achados), gravados, novos, ja_tinha, fora))
+    _linha("Custo real: US$ %.4f (%d itens)" % (custo, itens))
+    _linha()
+    _linha("Nenhum foi julgado relevante ainda — a banda diz que o perfil TEM")
+    _linha("o tamanho certo, nao que ele presta. Confira: pipeline.py status")
     return 0
 
 
@@ -164,12 +622,27 @@ def descobrir(cfg, nicho, max_perfis=None, forcar=False):
 
 
 def coletar(cfg, nicho=None, perfis=None, posts_por_perfil=None,
-            limite_perfis=None, forcar=False, so_aprovados=False):
+            limite_perfis=None, forcar=False, so_aprovados=False,
+            janela_dias=None, tipo=None, sem_fixados=False):
     apify = config.apify(cfg)
-    posts_por_perfil = posts_por_perfil or apify["posts_por_perfil"]
+    criterios = config.coleta(cfg)
+    do_nicho, _ = _do_nicho(cfg, nicho)
+
+    posts_por_perfil = (posts_por_perfil or criterios["posts_por_perfil"]
+                        or apify["posts_por_perfil"])
     limite_perfis = limite_perfis or apify["max_perfis"]
+    tipo = tipo or do_nicho.get("tipo") or criterios["tipo"]
+    if janela_dias is None:
+        janela_dias = do_nicho.get("janela_dias", criterios["janela_dias"])
+    incluir_fixados = criterios["incluir_fixados"] and not sem_fixados
 
     _titulo("2. Coleta de conteúdo")
+    _mostrar_criterios([
+        ("janela", "%d dias" % janela_dias if janela_dias else "sem filtro de data"),
+        ("tipo", tipo),
+        ("posts por perfil", posts_por_perfil),
+        ("fixados", "entram marcados" if incluir_fixados else "descartados"),
+    ])
 
     with db.conectar(cfg) as cx:
         if perfis:
@@ -204,7 +677,9 @@ def coletar(cfg, nicho=None, perfis=None, posts_por_perfil=None,
         cx.commit()
 
         try:
-            coleta = coletor.coletar_conteudo(usuarios, posts_por_perfil)
+            coleta = coletor.coletar_conteudo(
+                usuarios, posts_por_perfil,
+                janela_dias=janela_dias, tipo=tipo)
         except mod_coletor.ErroDeColeta as erro:
             jobs.fechar_coleta(cx, coleta_id, status=jobs.FALHA, erro=str(erro))
             cx.commit()
@@ -212,7 +687,7 @@ def coletar(cfg, nicho=None, perfis=None, posts_por_perfil=None,
             return 1
 
         guarda = LocalStorage()
-        na_fila = 0
+        na_fila, fixados, descartados = 0, 0, 0
 
         for perfil in coleta.perfis:
             perfil_id = profiles.salvar(cx, perfil, fonte="apify",
@@ -224,6 +699,16 @@ def coletar(cfg, nicho=None, perfis=None, posts_por_perfil=None,
                                      job_id=coleta_id)
 
         for post in coleta.posts:
+            # `[MEDIDO 30/08/2026]` O fixado passa por cima do filtro de data
+            # do Actor: pedindo 30 dias vieram dois posts de fora, e eram
+            # exatamente os dois `isPinned` — um de 2024, com 6,9M de views.
+            # Deixar isso entrar sem marca envenena qualquer media de janela.
+            if post.get("fixado"):
+                fixados += 1
+                if not incluir_fixados:
+                    descartados += 1
+                    continue
+
             perfil_id = profiles.id_por_usuario(cx, post["perfil"])
             if perfil_id is None:
                 # O Actor devolveu post de um perfil que não veio na lista de
@@ -256,6 +741,11 @@ def coletar(cfg, nicho=None, perfis=None, posts_por_perfil=None,
     _linha("%d posts, %d vídeos. %d novos na fila. Custo real: US$ %.4f"
            % (len(coleta.posts), len(coleta.videos), na_fila,
               coleta.custo_usd or 0))
+    if fixados:
+        _linha("%d fixado(s): %s. Post fixado escapa da janela de data — fica"
+               % (fixados, "%d descartado(s)" % descartados if descartados
+                  else "gravados e marcados"))
+        _linha("marcado para não entrar em conta de recência como se fosse novo.")
     _linha("Próximo passo: python src/pipeline.py baixar")
     return 0
 
@@ -705,9 +1195,30 @@ def ler_argumentos(argv=None):
     p = argparse.ArgumentParser(description="Pipeline de coleta do Instagram")
     sub = p.add_subparsers(dest="comando", required=True)
 
+    m = sub.add_parser("mapear", help="tema -> vocabulário, perfis e números")
+    m.add_argument("tema")
+    m.add_argument("--teto-usd", type=float, dest="teto_usd",
+                   help="freio duro, em dólar. Conta pela estimativa")
+    m.add_argument("--rodadas", type=int, help="profundidade da exploração")
+    m.add_argument("--saturacao", type=float,
+                   help="para quando a novidade cair abaixo disto (0.20)")
+    m.add_argument("--itens-por-tag", type=int, dest="itens_por_tag")
+    m.add_argument("--aplicar", action="store_true",
+                   help="grava no banco o que você marcou no dossiê")
+
+    # As flags de critério são o espelho da seção do `config.local.json`.
+    # Espelho, e não substituto: a flag serve para experimentar uma rodada sem
+    # editar arquivo; o que vale por padrão continua sendo o que está no
+    # config. Ordem: flag > config > padrão do código.
     d = sub.add_parser("descobrir", help="nicho -> perfis")
     d.add_argument("nicho")
     d.add_argument("--max-perfis", type=int)
+    d.add_argument("--eixos", help="nome, hashtag, ou 'nome,hashtag'")
+    d.add_argument("--seguidores", metavar="MIN-MAX",
+                   help="banda de seguidores, ex.: 10000-500000")
+    d.add_argument("--max-qualificar", type=int, dest="max_qualificar",
+                   help="teto de candidatos de hashtag a qualificar (cada um "
+                        "custa uma chamada)")
     d.add_argument("--forcar", action="store_true", help="não perguntar do custo")
 
     c = sub.add_parser("coletar", help="perfis -> conteúdo + fila")
@@ -716,6 +1227,12 @@ def ler_argumentos(argv=None):
     c.add_argument("--posts", type=int, dest="posts_por_perfil")
     c.add_argument("--limite-perfis", type=int)
     c.add_argument("--so-aprovados", action="store_true")
+    c.add_argument("--janela-dias", type=int, dest="janela_dias",
+                   help="só posts dos últimos N dias (0 = sem filtro de data)")
+    c.add_argument("--tipo", choices=("reels", "posts"),
+                   help="reels pede só vídeo, e por isso sai mais barato")
+    c.add_argument("--sem-fixados", action="store_true", dest="sem_fixados",
+                   help="descartar post fixado em vez de gravá-lo marcado")
     c.add_argument("--forcar", action="store_true")
 
     lp = sub.add_parser("limpar", help="o que dá para liberar do disco")
@@ -756,11 +1273,24 @@ def main(argv=None):
         return 1
 
     try:
+        if args.comando == "mapear":
+            return mapear(cfg, args.tema, args.teto_usd, args.rodadas,
+                          args.saturacao, args.itens_por_tag, args.aplicar)
         if args.comando == "descobrir":
-            return descobrir(cfg, args.nicho, args.max_perfis, args.forcar)
+            eixos = [e.strip().lower() for e in (args.eixos or "").split(",")
+                     if e.strip()]
+            return descobrir(cfg, args.nicho, args.max_perfis, args.forcar,
+                             eixos=eixos or None, seguidores=args.seguidores,
+                             max_qualificar=args.max_qualificar)
         if args.comando == "coletar":
+            # `--janela-dias 0` é o jeito de dizer "sem filtro de data" na
+            # linha de comando. `None` ali significaria "não passei a flag", e
+            # aí o config voltaria a mandar — que é o contrário do pedido.
+            janela = None if args.janela_dias is None else (args.janela_dias or None)
             return coletar(cfg, args.nicho, args.perfis, args.posts_por_perfil,
-                           args.limite_perfis, args.forcar, args.so_aprovados)
+                           args.limite_perfis, args.forcar, args.so_aprovados,
+                           janela_dias=janela, tipo=args.tipo,
+                           sem_fixados=args.sem_fixados)
         if args.comando == "baixar":
             return baixar(cfg, args.limite, args.concorrencia,
                           args.tentar_de_novo)

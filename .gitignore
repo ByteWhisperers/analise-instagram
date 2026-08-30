@@ -13,9 +13,14 @@ __pycache__/
 dados/buscas/*
 dados/perfis/*
 dados/analises/*
+# Dossies de mapeamento: saida derivada, refeita a cada rodada. Segue a mesma
+# regra de buscas/ e analises/ — o que sobrevive e o que voce APROVOU, e isso
+# mora no banco, nao no arquivo.
+dados/mapeamentos/*
 !dados/buscas/.gitkeep
 !dados/perfis/.gitkeep
 !dados/analises/.gitkeep
+!dados/mapeamentos/.gitkeep
 
 # Saída gerada
 saida/*

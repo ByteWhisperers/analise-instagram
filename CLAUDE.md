@@ -26,8 +26,9 @@ o escopo cresceu.
 | Etapa | Comando | Entrega |
 |---|---|---|
 | Preparo | `preparar.py verificar` | o que falta na máquina, e o conserto |
-| Esquema | `migrar.py aplicar` | as 20 tabelas do PostgreSQL |
-| Descoberta | `pipeline.py descobrir "<nicho>"` | perfis em `profiles` |
+| **Mapeamento** | `pipeline.py mapear "<tema>"` | vocabulário, perfis-semente e a banda medida. Seco: só grava com `--aplicar` |
+| Esquema | `migrar.py aplicar` | as 21 tabelas do PostgreSQL |
+| Descoberta | `pipeline.py descobrir "<nicho>"` | perfis em `profiles`, filtrados pela banda |
 | Coleta | `pipeline.py coletar --nicho X` | conteúdo + fila em `processing_jobs` |
 | Download | `pipeline.py baixar` | `dados/perfis/<perfil>/<id>/midia.mp4` |
 | Situação | `pipeline.py status` | cobertura, fila e custo por nível |
@@ -44,6 +45,7 @@ Módulos de apoio, sem linha de comando própria:
 | Arquivo | Responsabilidade |
 |---|---|
 | `src/config.py` | caminhos do projeto e leitura validada do `config.local.json` |
+| `src/mapeador.py` | ranquear, saturar, medir e montar o dossiê. Só função pura |
 | `src/console.py` | faz stdout aguentar emoji. **Sem ele o `ranking` quebra** |
 | `src/preparar.py` | as 7 checagens do ambiente. Verifica e instrui, não instala |
 | `src/db.py` | conexão com o PostgreSQL e execução das migrations |
@@ -58,16 +60,17 @@ Módulos de apoio, sem linha de comando própria:
 | `src/desempenho.py` | engajamento, velocidade e score, só função pura |
 | `src/legenda.py` | palavras com tempo → `.ass` com karaokê |
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
+| `tests/test_mapeador.py` | 62 conferências do mapeamento, sem rede |
 | `tests/test_metricas.py` | 34 conferências das contas |
 | `tests/test_banco.py` | 54 conferências do banco e das consultas |
-| `tests/test_coleta.py` | 73 conferências da normalização, storage, download e faxina |
+| `tests/test_coleta.py` | 135 conferências da normalização, storage, download, faxina e critérios |
 | `tests/test_desempenho.py` | 66 conferências dos scores e do crescimento |
-| `tests/test_db.py` | 58 conferências da conexão, das migrations e do config |
+| `tests/test_db.py` | 106 conferências da conexão, das migrations e do config |
 | `tests/test_preparar.py` | 26 conferências do preparo e da saída de console |
-| `tests/test_repos_*.py` | 263 conferências contra um PostgreSQL de verdade |
+| `tests/test_repos_*.py` | 279 conferências contra um PostgreSQL de verdade |
 
-**574 conferências, todas passando** (contadas na saída real, não estimadas).
-Rode as onze antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
+**762 conferências, todas passando** (contadas na saída real, não estimadas).
+Rode as doze antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
 o PostgreSQL de pé; se ele não responder, elas avisam e saem sem falhar.
 
 Apagados em 28/08/2026: `src/ig.py`, `src/buscar.py`, `src/coletar.py`,
@@ -96,6 +99,16 @@ desfazer, e isso travava faxina de código.
   dá US$ 5/mês. Três freios no código: estimativa com confirmação,
   `teto_usd_por_rodada` e `max_items`. Ver
   [ADR 005](docs/decisions/005-apify-em-vez-de-raspagem-propria.md).
+- **Antes de buscar, mapeia.** Um tema em português comum não é uma hashtag:
+  `#desastresetragedias` devolveu 1 item e zero termos, enquanto `#desastres`
+  devolveu 64. O `mapear` descobre o vocabulário, mede a banda do nicho e
+  espera sua aprovação — nada entra sozinho. Ver a T14.
+- **Os critérios de coleta são configuração, nunca constante.** Quem escolhe
+  a banda de seguidores, a janela de dias, o eixo de busca e o que fazer com
+  post fixado é o `config.local.json`, com flag espelho na linha de comando.
+  A precedência é `flag > config > padrão`. Ver a T13.
+- **O post fixado escapa do filtro de data do Actor** — medido, não suposto.
+  Ele entra marcado (`contents.is_pinned`) para não se passar por recente.
 - **A análise continua sem API paga.** O Python calcula os números; a leitura
   qualitativa é escrita por mim. Nenhum LLM entra na conta.
 - **Nunca criar conta de Instagram.** Recusado, é padrão de conta falsa em massa.

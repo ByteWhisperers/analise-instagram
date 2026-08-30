@@ -4,6 +4,163 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-08-30 (2) — o mapeamento: a fase que faltava antes da busca
+
+O sistema tinha um regime só: você já sabia o termo, pedia, recebia. Isso
+assume que o vocabulário do assunto é conhecido — e funcionou com "receitas"
+por acidente, porque o termo é a palavra que as pessoas usam.
+
+Com *"perfis que falam de desastres e tragédias"* quebra na primeira linha:
+**o input que o comando exige é justamente o output que ainda não se tem.**
+
+#### A prova, e ela é curta
+
+```
+#desastresetragedias    1 item,   0 termos
+#desastres             20 itens, 64 termos
+```
+
+O tema escrito em português não é uma hashtag. A cascata de sementes
+(concatenação, depois cada palavra significativa, parando na primeira que
+render) nasceu dessa falha real — não de previsão.
+
+#### E o que o mapeamento mostrou sobre o tema
+
+O vocabulário voltou **em espanhol**: `#emergencias`, `#bomberos`,
+`#prevención`, `#gestióndelriesgo`, `#perú`, `#inscripcionesabiertas`. É um
+cluster de defesa civil e cursos de formação hispano-americano — não notícia de
+tragédia brasileira. Ninguém teria adivinhado, e ficou sabido por US$ 0,03 em
+vez de por uma coleta inteira desperdiçada.
+
+#### O que passou a existir
+
+- `pipeline.py mapear "<tema>"` — **seco por padrão**, como o `limpar`: escreve
+  um dossiê em `dados/mapeamentos/` e não toca no banco. `--aplicar` grava o
+  que você marcou
+- `src/mapeador.py` — ranquear, saturar, medir, montar dossiê. Só função pura
+- Migration 005: `niche_terms` (o vocabulário **com a evidência**),
+  `niches.criteria`, e os dois `CHECK` abertos para `niche_mapping`
+- `coletor.tags_dos_itens()` — co-ocorrência de hashtag, de graça: o campo já
+  vem dentro do item pago
+- `coletor.relacionados_de()` — liga `perfis_relacionados()`, que estava
+  **escrito, testado e órfão** desde que nasceu
+- Precedência final: **flag > nicho (banco) > global (config) > padrão**
+
+#### A decisão de ranqueamento, e o número que a sustenta
+
+As hashtags reais de @receitasdepai trouxeram `publi`, `MercadoLivre`,
+`PagBank` e `AeC440` — propaganda, não receita. Tag de patrocínio aparece
+**muito**, mas num perfil só; tag do nicho aparece em vários. Por isso o
+ranking é por **perfis distintos** e não por frequência: a propaganda afunda
+sozinha, sem lista negra e sem LLM.
+
+#### Uma inversão que corrige um erro da T13
+
+Na T13 a banda 10k–500k foi escolhida por intuição, sem ninguém ter medido
+nada. Agora os números são **resultado** do mapeamento: percentis dos perfis
+achados, com a conta ao lado (`"p25 a p75 de 15 perfis medidos, mediana
+1.435"`). Número sem a conta que o produziu é chute com cara de medição.
+
+#### Três defeitos consertados no caminho
+
+- **As migrations 004 e 005 não se registravam em `schema_migrations`** —
+  herdado da T13. Idempotentes, então sem estrago, mas rodavam para sempre.
+- **`costs.NIVEL` não conhecia `niche_mapping`:** o comando gastava e estourava
+  na hora de registrar o gasto.
+- **A medição ficava sem orçamento.** Agora a exploração guarda uma chamada de
+  reserva: explorar mais vale menos que saber de quem se está falando.
+
+#### Verificação
+
+**762 conferências, zero falhas**, em 12 arquivos (eram 645). Rodadas reais:
+o teto parando o laço em US$ 0,0540 de 0,06; o mapeamento completo com 292
+termos e 40 perfis; o seco não escrevendo linha nenhuma; o `--aplicar` gravando
+6 aprovadas e 34 reprovadas; e a busca exibindo `tags do nicho: #emergencias,
+#desastres, #bomberos` com `banda vem de: nicho mapeado`.
+
+Custo total: **US$ 0,0702 registrados**.
+
+
+### 2026-08-30 — os critérios de coleta saem do código e viram variáveis
+
+Até aqui, a única coisa que decidia o que a Apify trazia era o nicho e um teto
+de quantidade. O resto era implícito. Esta entrada troca isso por critério
+declarado, num lugar que o usuário controla.
+
+#### Três hipóteses foram testadas contra o Actor. Duas caíram.
+
+Custo total das sondas: **US$ 0,0081**.
+
+1. **`onlyPostsNewerThan` funciona, mas vaza.** `"30 days"` virou `2026-07-31`
+   corretamente. Ainda assim, 2 dos 4 reels devolvidos estavam fora da janela —
+   e eram **exatamente os 2 com `isPinned: true`**:
+
+   | data | fixado | views |
+   |---|---|---|
+   | 2024-10-09 | sim | 6.960.164 |
+   | 2026-04-18 | sim | 3.348.237 |
+   | 2026-08-28 | não | 953.973 |
+   | 2026-08-25 | não | 351.405 |
+
+   A correlação foi perfeita. Explica o post de abril com 3,3M que destoava no
+   banco desde 28/08: é post fixado, não post recente.
+
+2. **`searchType: "hashtag"` está morto.** Duas tentativas, as duas
+   `no_items — Empty or private data`. Item de erro não é cobrado.
+
+3. **Mas a descoberta por hashtag funciona por `directUrls`**, com
+   `instagram.com/explore/tags/<tag>/`.
+
+#### O viés que isso revelou
+
+A busca por nome acha quem tem a palavra no **nome**, não quem publica no
+assunto. **7 dos 9 perfis do banco tinham "receitas" no username.** A primeira
+rodada pelo eixo novo trouxe `mf.meatfreaks` e `leonardoriverob` — dois perfis
+que a busca por nome nunca acharia.
+
+#### O que passou a existir
+
+- `config.descoberta()` — eixos, banda de seguidores, só públicos, teto de
+  qualificação
+- `config.coleta()` — janela de dias, tipo, maturidade, o que fazer com fixado
+- Flags espelho: `descobrir --eixos --seguidores MIN-MAX --max-qualificar` e
+  `coletar --janela-dias --tipo --sem-fixados`
+- Precedência declarada e testada: **flag > config > padrão**
+- `pipeline.py` imprime os critérios em vigor no início de cada rodada
+- Migration 004: `contents.is_pinned`, índice parcial, e a coluna na
+  `v_content_current`
+- `coletor.na_banda()` com **três** respostas: True, False e **None para "não
+  dá para saber"** — o item da hashtag não traz contagem de seguidores, e
+  reprovar por falta de informação mataria o candidato mais interessante calado
+- `coletor.qualificar()`, a segunda chamada que resolve o None, com teto
+
+#### A seção de config que ninguém lia
+
+`busca.min_seguidores`, `busca.max_perfis` e `busca.somente_publicos` estavam
+no `config.local.example.json` desde o começo e **nenhum código os
+referenciava** — a config prometia um filtro que não acontecia, e nada na tela
+denunciava. A seção saiu; `descoberta` a substitui, e agora é lida de verdade.
+
+#### Verificação, com número
+
+- **645 conferências, zero falhas**, 11 arquivos (eram 574)
+- **Rodada real de descoberta por hashtag:** 10 candidatos, 5 qualificados
+  (teto respeitado), **2 aprovados pela banda** — `mf.meatfreaks` (26.846) e
+  `leonardoriverob` (11.895). Custo: US$ 0,0054
+- **Os 9 perfis anteriores não foram tocados**, inclusive os 5 que a banda
+  reprovaria (decisão do usuário: a banda vale para descoberta nova)
+- **Rodada real de coleta** em `receitasdepai`: os 2 fixados entraram
+  **marcados**, os recentes como `false`, e nenhum não-fixado furou os 30 dias.
+  Os 2 posts da coleta de 28/08 ficaram `NULL` — "não se sabe" —, que é o
+  honesto para linha gravada antes de a coluna existir
+
+#### Decisões do usuário registradas
+
+Janela de 30 dias (aprender o que funciona, não monitorar tendência); banda de
+10k–500k; a banda vale só para descoberta nova. O teto de qualificação (20) foi
+assumido por mim na ausência de resposta, e é configurável como todo o resto.
+
+
 ### 2026-08-29 — organização: sem Docker, com git, e o bug do emoji
 
 O pedido era Docker, para "organizar os arquivos e o banco". A medição inverteu

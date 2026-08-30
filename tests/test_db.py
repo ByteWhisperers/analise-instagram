@@ -210,6 +210,136 @@ conferir_que("todo id e IDENTITY, nao serial",
              sql.count("GENERATED ALWAYS AS IDENTITY") >= 12
              and "SERIAL" not in sql.upper().replace("SERIALIZABLE", ""))
 
+print("\n=== T13: os criterios saem do codigo e viram configuracao ===")
+
+VAZIO = {"postgres": CFG["postgres"]}
+
+padrao = config.descoberta(VAZIO)
+conferir("sem secao, o eixo padrao e o nome", padrao["eixos"], ["nome"])
+conferir("sem secao, a banda nasce em 10k", padrao["seguidores_min"], 10000)
+conferir("sem secao, a banda termina em 500k", padrao["seguidores_max"], 500000)
+conferir("sem secao, so perfil publico", padrao["somente_publicos"], True)
+conferir("sem secao, qualificar tem teto", padrao["max_qualificar"], 20)
+
+escolhido = config.descoberta(dict(VAZIO, descoberta={
+    "eixos": ["hashtag", "NOME"], "seguidores_min": 1, "seguidores_max": 2}))
+conferir("o config manda mais que o padrao", escolhido["seguidores_min"], 1)
+conferir("eixo aceita maiuscula e espaco", escolhido["eixos"],
+         ["hashtag", "nome"])
+conferir("o que o config nao diz, o padrao completa",
+         escolhido["max_qualificar"], 20)
+
+try:
+    config.descoberta(dict(VAZIO, descoberta={"eixos": ["telepatia"]}))
+    conferir_que("eixo inventado no config deveria estourar", False)
+except config.ErroDeConfig as erro:
+    conferir_que("eixo inventado no config lista os que existem",
+                 "hashtag" in str(erro) and "telepatia" in str(erro))
+
+try:
+    config.descoberta(dict(VAZIO, descoberta={"seguidores_min": 500000,
+                                              "seguidores_max": 10000}))
+    conferir_que("banda invertida deveria estourar", False)
+except config.ErroDeConfig as erro:
+    conferir_que("banda invertida avisa que ninguem passaria",
+                 "nenhum perfil passa" in str(erro))
+
+padrao = config.coleta(VAZIO)
+conferir("sem secao, a janela e de 30 dias", padrao["janela_dias"], 30)
+conferir("sem secao, pede reels", padrao["tipo"], "reels")
+conferir("sem secao, fixado entra marcado", padrao["incluir_fixados"], True)
+conferir("sem secao, maturidade de 48h", padrao["maturidade_horas"], 48)
+conferir("as pausas antigas continuam de pe",
+         padrao["segundos_entre_requisicoes"], 8)
+
+conferir("janela nula e jeito legitimo de nao filtrar por data",
+         config.coleta(dict(VAZIO, coleta={"janela_dias": None}))["janela_dias"],
+         None)
+
+for ruim in (0, -5, "trinta", 1.5):
+    try:
+        config.coleta(dict(VAZIO, coleta={"janela_dias": ruim}))
+        conferir_que("janela_dias=%r deveria estourar" % (ruim,), False)
+    except config.ErroDeConfig as erro:
+        conferir_que("janela_dias=%r e recusada com explicacao" % (ruim,),
+                     "janela_dias" in str(erro))
+
+try:
+    config.coleta(dict(VAZIO, coleta={"tipo": "carrossel"}))
+    conferir_que("tipo inventado deveria estourar", False)
+except config.ErroDeConfig as erro:
+    conferir_que("tipo inventado diz quais existem",
+                 "reels" in str(erro) and "posts" in str(erro))
+
+
+print("\n=== T13: a migration do post fixado ===")
+
+sql_004 = (db.MIGRATIONS / "004_fixado.sql").read_text(encoding="utf-8")
+conferir_que("004 acrescenta a coluna sem quebrar quem ja tem",
+             "ADD COLUMN IF NOT EXISTS is_pinned" in sql_004)
+conferir_que("004 refaz a view para expor o campo",
+             "CREATE OR REPLACE VIEW v_content_current" in sql_004)
+conferir_que("a coluna nova entra NO FIM da view — CREATE OR REPLACE so "
+             "aceita assim",
+             sql_004.index("c.is_pinned\n\nFROM contents c") >
+             sql_004.index("engagement_base"))
+conferir_que("o indice do fixado e parcial, e nao sobre a coluna inteira",
+             "WHERE is_pinned IS TRUE" in sql_004)
+
+print("\n=== T14: os freios do mapeamento ===")
+
+padrao = config.mapeamento(VAZIO)
+conferir("sem secao, o teto e US$ 0,30", padrao["teto_usd"], 0.30)
+conferir("sem secao, tres rodadas", padrao["rodadas"], 3)
+conferir("sem secao, satura em 20%", padrao["saturacao"], 0.20)
+conferir("sem secao, 30 itens por tag", padrao["itens_por_tag"], 30)
+conferir("sem secao, mede ate 12 perfis para a distribuicao",
+         padrao["perfis_para_medir"], 12)
+
+conferir("o config manda mais que o padrao",
+         config.mapeamento(dict(VAZIO, mapeamento={"teto_usd": 0.05}))["teto_usd"],
+         0.05)
+
+for ruim in (0, -1, "muito", None):
+    try:
+        config.mapeamento(dict(VAZIO, mapeamento={"teto_usd": ruim}))
+        conferir_que("teto_usd=%r deveria estourar" % (ruim,), False)
+    except config.ErroDeConfig as erro:
+        conferir_que("teto_usd=%r e recusado com explicacao" % (ruim,),
+                     "teto_usd" in str(erro))
+
+for ruim in (0, 1, 1.5, -0.2, "vinte"):
+    try:
+        config.mapeamento(dict(VAZIO, mapeamento={"saturacao": ruim}))
+        conferir_que("saturacao=%r deveria estourar" % (ruim,), False)
+    except config.ErroDeConfig as erro:
+        conferir_que("saturacao=%r e recusada com explicacao" % (ruim,),
+                     "saturacao" in str(erro))
+
+conferir("descoberta ganhou teto de tags por rodada",
+         config.descoberta(VAZIO)["max_tags_por_rodada"], 3)
+
+
+print("\n=== T14: a migration do mapeamento ===")
+
+sql_005 = (db.MIGRATIONS / "005_mapeamento.sql").read_text(encoding="utf-8")
+conferir_que("005 abre o CHECK de job_type para niche_mapping",
+             "'niche_mapping'" in sql_005 and "collection_jobs_job_type_check" in sql_005)
+conferir_que("005 abre o CHECK de operation tambem",
+             "data_costs_operation_check" in sql_005)
+conferir_que("005 cria niche_terms", "CREATE TABLE IF NOT EXISTS niche_terms" in sql_005)
+conferir_que("005 guarda a EVIDENCIA, e nao so o resultado",
+             "profiles_count" in sql_005 and "posts_count" in sql_005)
+conferir_que("o indice de aprovados e parcial",
+             "WHERE is_approved IS TRUE" in sql_005)
+
+for versao in ("004_fixado", "005_mapeamento"):
+    sql = (db.MIGRATIONS / ("%s.sql" % versao)).read_text(encoding="utf-8")
+    conferir_que("%s se registra em schema_migrations (senao roda pra sempre)"
+                 % versao,
+                 "INSERT INTO schema_migrations (version) VALUES ('%s')" % versao
+                 in sql)
+
 print("\n" + "=" * 52)
 if falhas:
     print("%d TESTE(S) FALHARAM:" % len(falhas))

@@ -25,6 +25,10 @@ PRECO_APIFY_POR_MIL = {"free": Decimal("2.70"), "starter": Decimal("2.30"),
 
 NIVEL = {
     "profile_collection": 1, "content_collection": 1, "metric_refresh": 1,
+    # Mapear e coleta primaria como as outras: gasta na Apify e traz dado cru.
+    # O CHECK do banco foi aberto na migration 005; sem esta linha aqui, o
+    # comando roda, gasta, e estoura na hora de registrar o que gastou.
+    "niche_mapping": 1,
     "video_download": 2, "transcription": 2,
     "comment_collection": 3,
     "llm_analysis": 4, "embedding": 4,

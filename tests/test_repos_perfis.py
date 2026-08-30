@@ -192,6 +192,55 @@ try:
     p.conferir_que("mas o perfil continua lá",
                    profiles.por_usuario(cx, "casa_verde") is not None)
 
+    p.secao("T14: o nicho mapeado")
+
+    mapeado = niches.obter_ou_criar(cx, "desastres e tragedias")
+
+    p.conferir("nicho nunca mapeado devolve {} — e nao None",
+               niches.criterios(cx, mapeado), {})
+
+    niches.salvar_criterios(cx, mapeado, {"seguidores_min": 8000,
+                                          "seguidores_max": 240000,
+                                          "origem": "mapeamento de 30/08"})
+    p.conferir("criterios voltam como dicionario",
+               niches.criterios(cx, mapeado)["seguidores_max"], 240000)
+
+    niches.salvar_termo(cx, mapeado, "tragedia", perfis=5, posts=12,
+                        fonte="#desastres", aprovado=True)
+    niches.salvar_termo(cx, mapeado, "resgate", perfis=3, posts=4,
+                        fonte="#desastres", aprovado=True)
+    niches.salvar_termo(cx, mapeado, "publi", perfis=1, posts=40,
+                        fonte="#desastres", aprovado=False)
+    niches.salvar_termo(cx, mapeado, "caso", perfis=2, posts=2,
+                        fonte="relacionados")
+
+    todos = niches.termos(cx, mapeado)
+    p.conferir("o vocabulario vem por perfis distintos, nao por posts",
+               [t["termo"] for t in todos],
+               ["tragedia", "resgate", "caso", "publi"])
+    p.conferir("a tag de propaganda tem 40 posts e mesmo assim fica por ultimo",
+               todos[-1]["posts"], 40)
+    p.conferir("termo nao julgado fica com aprovado None",
+               [t["aprovado"] for t in todos if t["termo"] == "caso"], [None])
+
+    p.conferir("tags_aprovadas devolve so o aprovado, como lista de string",
+               niches.tags_aprovadas(cx, mapeado), ["tragedia", "resgate"])
+
+    # Remapear atualiza os numeros e NAO desfaz julgamento — mesma regra de
+    # `profiles.salvar()`, que nunca toca em `is_approved`.
+    niches.salvar_termo(cx, mapeado, "tragedia", perfis=9, posts=30)
+    voltou = [t for t in niches.termos(cx, mapeado) if t["termo"] == "tragedia"][0]
+    p.conferir("remapear atualiza a evidencia", voltou["perfis"], 9)
+    p.conferir("mas nao apaga a aprovacao", voltou["aprovado"], True)
+    p.conferir("e nao duplica o termo",
+               cx.execute("SELECT count(*) FROM niche_terms WHERE term = %s",
+                          ("tragedia",)).fetchone()[0], 1)
+
+    p.conferir("apagar o nicho leva o vocabulario junto",
+               (cx.execute("DELETE FROM niches WHERE id = %s", (mapeado,)),
+                cx.execute("SELECT count(*) FROM niche_terms").fetchone()[0])[1],
+               0)
+
     cx.commit()
 
 finally:

@@ -52,9 +52,9 @@ def salvar(conexao, post, perfil_id, plataforma=PLATAFORMA_PADRAO,
             content_type, caption, published_at, duration_seconds,
             thumbnail_url, source_video_url, audio_id, audio_title,
             audio_author, is_original_audio, location_id, location_name,
-            raw_data, last_seen_at)
+            is_pinned, raw_data, last_seen_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, now())
+                %s, %s, %s, now())
         ON CONFLICT (platform, platform_content_id) DO UPDATE SET
             content_url      = COALESCE(EXCLUDED.content_url,      contents.content_url),
             content_type     = COALESCE(EXCLUDED.content_type,     contents.content_type),
@@ -69,6 +69,7 @@ def salvar(conexao, post, perfil_id, plataforma=PLATAFORMA_PADRAO,
             is_original_audio= COALESCE(EXCLUDED.is_original_audio,contents.is_original_audio),
             location_id      = COALESCE(EXCLUDED.location_id,      contents.location_id),
             location_name    = COALESCE(EXCLUDED.location_name,    contents.location_name),
+            is_pinned        = COALESCE(EXCLUDED.is_pinned,        contents.is_pinned),
             raw_data         = COALESCE(EXCLUDED.raw_data,         contents.raw_data),
             last_seen_at     = now()
         RETURNING id
@@ -87,6 +88,9 @@ def salvar(conexao, post, perfil_id, plataforma=PLATAFORMA_PADRAO,
          booleano(post.get("audio_original")),
          post.get("local_id"),
          post.get("local_nome"),
+         # Post fixado. `COALESCE` acima e proposital: recoletar sem o campo
+         # (o eixo `posts` nem sempre traz) nao apaga o que ja se sabia.
+         booleano(post.get("fixado")),
          json.dumps(guardar_bruto, ensure_ascii=False) if guardar_bruto else None))
 
     conteudo_id = id_de(cursor)

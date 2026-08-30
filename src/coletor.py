@@ -138,6 +138,21 @@ def _primeiro_link(bruto):
     return _primeiro(bruto, "externalUrl", "website")
 
 
+def _booleano_ou_none(valor):
+    """True/False quando a fonte disse; None quando ela nao trouxe o campo.
+
+    Existe para nao transformar ausencia em negacao. `bool(None)` daria False,
+    que e uma AFIRMACAO — e afirmar sem base e o que faz um relatorio mentir.
+
+    Tem um gemeo em `repos/_comum.booleano`, e a repeticao e de proposito:
+    `coletor.py` nao importa da camada de repositorio. Tres linhas duplicadas
+    custam menos que um modulo de coleta acoplado ao banco.
+    """
+    if valor is None:
+        return None
+    return bool(valor)
+
+
 def normalizar_perfil(bruto, nicho=None):
     """Item cru do Actor -> o dicionario que `banco.salvar_perfil` aceita."""
     usuario = _primeiro(bruto, "username", "ownerUsername", "userName")
@@ -205,6 +220,14 @@ def normalizar_post(bruto, usuario_padrao=None):
         "tipo": tipo,
         "typename": _primeiro(bruto, "type", "__typename"),
         "e_video": e_video,
+
+        # `[MEDIDO 30/08/2026]` O post fixado ESCAPA do `onlyPostsNewerThan`:
+        # pedindo 30 dias vieram 2 posts de fora da janela, e eram exatamente
+        # os 2 com `isPinned`. Sem este campo, um post de 2024 com 6,9M de
+        # views entra numa media de "ultimos 30 dias" e a arruina.
+        # None e nao False quando a fonte nao diz: nao saber e diferente de
+        # saber que nao.
+        "fixado": _booleano_ou_none(_primeiro(bruto, "isPinned", "is_pinned")),
         "duracao_segundos": _primeiro(bruto, "videoDuration", "duration"),
         "visualizacoes": _contagem(_primeiro(bruto, "videoPlayCount",
                                              "videoViewCount", "playCount",
@@ -270,6 +293,142 @@ def perfis_relacionados(bruto):
             if isinstance(item, dict) and item.get("username")]
 
 
+# ------------------------------------------------ Criterios, em funcao pura
+#
+# Tudo aqui decide SEM rede: da para testar de graca, e o teste nao depende de
+# a Apify estar de pe nem de gastar dolar.
+
+
+def tag_do_termo(nicho):
+    """"Receitas de Bolo" -> "receitasdebolo". "Receitas Faceis" com acento
+    continua com acento.
+
+    Hashtag do Instagram nao tem espaco nem pontuacao, mas **tem acento**:
+    `#receitasfaceis` e `#receitasfáceis` sao DUAS tags diferentes, com feeds
+    diferentes. A primeira versao disto derrubava o acento com NFKD, e nesse
+    caso o mapeamento pediria uma tag e receberia outra.
+
+    `[MEDIDO 30/08/2026]` `receitasfáceis` veio acentuada nas hashtags reais de
+    @receitasdepai. Nao e hipotese.
+
+    Sublinhado sobrevive porque o Instagram aceita (`#comida_boa`). O resto da
+    pontuacao cai.
+
+    A funcao e IDEMPOTENTE de proposito: passar uma tag ja valida por aqui nao
+    a estraga. E o que permite usar a mesma funcao para derivar tag de um tema
+    escrito em portugues comum e para conferir uma tag que veio do mapeamento.
+    """
+    import unicodedata
+
+    # NFC e nao NFKD: compoe o acento num caractere so, que e como o Instagram
+    # escreve. NFKD decompoe em letra + acento solto, e ai `isalnum()` deixaria
+    # a letra e jogaria o acento fora — exatamente o bug que isto conserta.
+    texto = unicodedata.normalize("NFC", str(nicho or "")).lower()
+    return "".join(c for c in texto if c.isalnum() or c == "_")
+
+
+def url_da_tag(nicho):
+    """A URL da aba da hashtag.
+
+    `[MEDIDO 30/08/2026]` E por AQUI que a descoberta por hashtag funciona.
+    `searchType: "hashtag"` foi tentado duas vezes e devolveu
+    `no_items — Empty or private data` nas duas.
+    """
+    from urllib.parse import quote
+
+    # `quote` porque a tag pode ter acento, e acento cru no caminho da URL e
+    # aposta na boa vontade de quem le do outro lado.
+    return "https://www.instagram.com/explore/tags/%s/" % quote(tag_do_termo(nicho))
+
+
+def na_banda(perfil, minimo=None, maximo=None, somente_publicos=True):
+    """O perfil cabe nos criterios? True, False, ou **None para "nao da para
+    saber"**.
+
+    O terceiro estado nao e frescura: o item que vem da hashtag NAO traz
+    contagem de seguidores — conferido, nem com `addParentData`. Devolver
+    False ali seria reprovar por falta de informacao, e o candidato mais
+    interessante do nicho morreria caladinho. Devolver None manda ele para a
+    qualificacao, que custa uma chamada e responde de verdade.
+    """
+    if somente_publicos and perfil.get("privado") is True:
+        return False
+
+    seguidores = perfil.get("seguidores")
+    if seguidores is None:
+        return None
+
+    if minimo is not None and seguidores < minimo:
+        return False
+    if maximo is not None and seguidores > maximo:
+        return False
+    return True
+
+
+def tags_dos_itens(itens, fonte=None):
+    """Itens crus -> o vocabulario que eles carregam, com a evidencia.
+
+    Devolve `{tag: {"posts": n, "perfis": [usuarios], "fonte": ...}}`.
+
+    **O numero que importa e `perfis`, nao `posts`.** Medido em 30/08/2026:
+    colhendo as hashtags de @receitasdepai vieram `publi`, `MercadoLivre`,
+    `PagBank` e `AeC440` — vocabulario de PUBLICIDADE, nao de receita. Tag de
+    patrocinio aparece MUITO, mas num perfil so; tag do nicho aparece em varios
+    perfis. Contar posts elegeria a propaganda.
+
+    Nao custa nada: o campo `hashtags` ja vem dentro do item que foi pago.
+    """
+    achado = {}
+
+    def _somar(bruto, dono):
+        for tag in (bruto.get("hashtags") or []):
+            if not isinstance(tag, str) or not tag.strip():
+                continue
+            chave = tag_do_termo(tag.lstrip("#"))
+            if not chave:
+                continue
+            linha = achado.setdefault(chave, {"posts": 0, "perfis": [],
+                                              "fonte": fonte})
+            linha["posts"] += 1
+            if dono and dono not in linha["perfis"]:
+                linha["perfis"].append(dono)
+
+    for bruto in itens or []:
+        if not isinstance(bruto, dict) or bruto.get("error"):
+            continue
+        dono = _primeiro(bruto, "ownerUsername", "username")
+        _somar(bruto, dono)
+        # Item de perfil (`resultsType: details`) traz os posts recentes
+        # aninhados, e as hashtags deles junto. Sem desaninhar aqui, mapear por
+        # perfil relacionado nao renderia vocabulario nenhum.
+        for aninhado in _aninhados(bruto):
+            _somar(aninhado, _primeiro(aninhado, "ownerUsername") or dono)
+
+    return achado
+
+
+def donos_dos_posts(itens):
+    """Itens da aba da tag -> candidatos, sem repetir.
+
+    E o que a hashtag entrega de util: uma lista de NOMES. Seguidores, bio e
+    o resto vem depois, e so para quem sobreviver ao teto.
+    """
+    vistos, candidatos = set(), []
+    for bruto in itens or []:
+        if not isinstance(bruto, dict) or bruto.get("error"):
+            continue
+        usuario = _primeiro(bruto, "ownerUsername", "username")
+        if not usuario or usuario in vistos:
+            continue
+        vistos.add(usuario)
+        candidatos.append({
+            "usuario": usuario,
+            "nome": _primeiro(bruto, "ownerFullName", "fullName"),
+            "perfil_id": str(_primeiro(bruto, "ownerId", padrao="")) or None,
+        })
+    return candidatos
+
+
 class Coleta:
     """O que uma rodada devolveu, junto com o que ela custou."""
 
@@ -298,10 +457,14 @@ class InstagramCollector:
 
     nome = "abstrato"
 
-    def descobrir_perfis(self, nicho, max_perfis):
+    def descobrir_perfis(self, nicho, max_perfis, eixo="nome"):
         raise NotImplementedError
 
-    def coletar_conteudo(self, usuarios, max_posts):
+    def qualificar(self, usuarios):
+        raise NotImplementedError
+
+    def coletar_conteudo(self, usuarios, max_posts, janela_dias=None,
+                         tipo="posts"):
         raise NotImplementedError
 
 
@@ -398,13 +561,19 @@ class ApifyInstagramCollector(InstagramCollector):
                       custo_usd=custo, run_id=run.id, duracao_ms=duracao_ms,
                       brutos=itens if self.guardar_brutos else [])
 
-    def descobrir_perfis(self, nicho, max_perfis=40):
-        """Termo -> perfis publicos candidatos.
+    def descobrir_perfis(self, nicho, max_perfis=40, eixo="nome"):
+        """Termo -> perfis candidatos, por um dos dois eixos.
 
-        Sem promessa de relevancia: a busca acha quem tem a palavra no nome,
-        nao quem performa. A filtragem e uma etapa a parte, por decisao
-        registrada no proprio pipeline.
+        Sem promessa de relevancia em nenhum dos dois: quem julga e o usuario,
+        e a filtragem e etapa a parte.
         """
+        if eixo == "hashtag":
+            return self._descobrir_por_hashtag(nicho, max_perfis)
+        if eixo != "nome":
+            raise ErroDeColeta(
+                "Eixo de descoberta %r nao existe. Ha `nome` e `hashtag`."
+                % (eixo,))
+
         entrada = {
             "search": nicho,
             "searchType": "user",
@@ -418,8 +587,143 @@ class ApifyInstagramCollector(InstagramCollector):
         itens, run, duracao = self._rodar(entrada, max_perfis)
         return self._montar(itens, run, duracao, nicho=nicho)
 
-    def coletar_conteudo(self, usuarios, max_posts=10):
-        """Perfis -> posts, com metadado. Nao baixa midia."""
+    def _descobrir_por_hashtag(self, nicho, max_perfis):
+        """Quem PUBLICA no assunto, e nao quem tem a palavra no nome.
+
+        `[MEDIDO 30/08/2026]` Este eixo existe porque o outro enviesa: dos 9
+        perfis que a busca por nome achou, 7 tinham "receitas" no username. Uma
+        sonda na aba da tag devolveu `mf.meatfreaks` e `leonardoriverob` — dois
+        que a busca por nome nunca acharia.
+
+        Duas coisas a saber antes de confiar no resultado:
+
+          1. A aba da tag ordena por RECENCIA, nao por desempenho. Vem post de
+             conta minuscula junto, e isso e esperado.
+          2. O item NAO traz contagem de seguidores. Por isso o retorno aqui e
+             candidato, nao perfil pronto: quem preenche e `qualificar()`.
+        """
+        entrada = {
+            "directUrls": [url_da_tag(nicho)],
+            "resultsType": "posts",
+            "resultsLimit": max_perfis,
+            "addParentData": True,
+        }
+        itens, run, duracao = self._rodar(entrada, max_perfis)
+
+        coleta = self._montar(itens, run, duracao, nicho=nicho)
+        conhecidos = {p.get("usuario") for p in coleta.perfis}
+        for candidato in donos_dos_posts(itens):
+            if candidato["usuario"] in conhecidos:
+                continue
+            coleta.perfis.append({
+                "usuario": candidato["usuario"],
+                "nome": candidato["nome"],
+                "perfil_id": candidato["perfil_id"],
+                "nicho": nicho,
+                "link_perfil": "https://www.instagram.com/%s/"
+                               % candidato["usuario"],
+                "lido_em": datetime.now().isoformat(timespec="seconds"),
+            })
+        return coleta
+
+    def mapear_tag(self, tag, limite=30):
+        """Uma rodada de tag feita para MAPEAR: os itens crus vem junto.
+
+        Diferente de `descobrir_perfis(eixo="hashtag")`, que so quer os donos.
+        Aqui os itens sao o produto: e deles que sai o vocabulario, pelo campo
+        `hashtags` que ja vem pago dentro de cada um.
+        """
+        entrada = {
+            "directUrls": [url_da_tag(tag)],
+            "resultsType": "posts",
+            "resultsLimit": limite,
+            "addParentData": True,
+        }
+        itens, run, duracao = self._rodar(entrada, limite)
+        coleta = self._montar(itens, run, duracao)
+        for candidato in donos_dos_posts(itens):
+            coleta.perfis.append({
+                "usuario": candidato["usuario"],
+                "nome": candidato["nome"],
+                "perfil_id": candidato["perfil_id"],
+                "link_perfil": "https://www.instagram.com/%s/"
+                               % candidato["usuario"],
+                "lido_em": datetime.now().isoformat(timespec="seconds"),
+            })
+        # O mapeamento precisa dos itens crus mesmo quando o coletor nao foi
+        # montado para guarda-los: sem eles nao ha hashtag para colher.
+        coleta.brutos = itens
+        return coleta
+
+    def relacionados_de(self, usuarios):
+        """Perfil -> quem o Instagram considera parecido.
+
+        `[MEDIDO 30/08/2026]` @receitasdepai devolveu **15 relacionados**. A
+        unica evidencia anterior era uma lista vazia, mas vinha de uma conta
+        com 12 seguidores e 0 posts — conta vazia nao tem parecido.
+
+        Parte de um perfil que ja se sabe relevante, e nao de uma palavra num
+        nome: e o eixo que acha `@gordicesdateka` sem que ninguem soubesse que
+        ele existia.
+
+        Devolve `(relacoes, coleta)` em vez de so a Coleta porque as duas
+        coisas interessam e sao diferentes: o mapa de quem puxa quem, e os
+        perfis-semente ja com os detalhes que a chamada trouxe.
+
+        **O relacionado vem SEM contagem de seguidores** — conferido: so
+        username, full_name, is_private, is_verified e id. Quem responde se ele
+        cabe na banda e `qualificar()`, exatamente como no eixo da hashtag.
+        """
+        usuarios = [u for u in (usuarios or []) if u]
+        if not usuarios:
+            return {}, Coleta()
+
+        entrada = {
+            "directUrls": ["https://www.instagram.com/%s/" % u
+                           for u in usuarios],
+            "resultsType": "details",
+            "resultsLimit": 1,
+        }
+        itens, run, duracao = self._rodar(entrada, len(usuarios) * 2)
+        coleta = self._montar(itens, run, duracao)
+        coleta.brutos = itens
+
+        relacoes = {}
+        for bruto in itens:
+            if not isinstance(bruto, dict) or bruto.get("error"):
+                continue
+            dono = _primeiro(bruto, "username", "ownerUsername")
+            if dono:
+                relacoes[dono] = perfis_relacionados(bruto)
+        return relacoes, coleta
+
+    def qualificar(self, usuarios):
+        """Nomes -> perfis com seguidores, bio e privacidade.
+
+        A segunda chamada que a hashtag obriga. Quem chama poe o teto: sem
+        teto, uma tag movimentada vira fatura.
+        """
+        usuarios = [u for u in (usuarios or []) if u]
+        if not usuarios:
+            return Coleta()
+
+        entrada = {
+            "directUrls": ["https://www.instagram.com/%s/" % u
+                           for u in usuarios],
+            "resultsType": "details",
+            "resultsLimit": 1,
+        }
+        itens, run, duracao = self._rodar(entrada, len(usuarios) * 2)
+        return self._montar(itens, run, duracao)
+
+    def coletar_conteudo(self, usuarios, max_posts=10, janela_dias=None,
+                         tipo="posts"):
+        """Perfis -> posts, com metadado. Nao baixa midia.
+
+        `tipo="reels"` pede so video ao Actor. Numa sonda de 30/08/2026 os 4
+        itens vieram `Video`/`clips` — deixa de pagar por foto e carrossel que
+        seriam descartados na hora do download.
+        """
         if isinstance(usuarios, str):
             usuarios = [usuarios]
         usuarios = list(usuarios)
@@ -428,10 +732,19 @@ class ApifyInstagramCollector(InstagramCollector):
 
         entrada = {
             "directUrls": ["https://www.instagram.com/%s/" % u for u in usuarios],
-            "resultsType": "posts",
+            "resultsType": "reels" if tipo == "reels" else "posts",
             "resultsLimit": max_posts,
             "addParentData": True,
         }
+
+        # O UNICO filtro que a Apify aceita na entrada, e por isso o unico que
+        # economiza dinheiro em vez de so economizar disco. Os outros sete
+        # campos de entrada do Actor sao quantidade e destino, nao criterio.
+        #
+        # `[MEDIDO 30/08/2026]` Ele nao e garantia: post fixado passa por cima.
+        # Quem separa o fixado depois e o campo `fixado` do post.
+        if janela_dias:
+            entrada["onlyPostsNewerThan"] = "%d days" % int(janela_dias)
         teto = max_posts * len(usuarios) + len(usuarios)
         itens, run, duracao = self._rodar(entrada, teto)
         return self._montar(itens, run, duracao,

@@ -306,6 +306,261 @@ conferir_que("a pasta vazia some junto", not vazia.exists())
 conferir("apagar o que nao existe devolve False, sem estourar",
          pipeline._apagar(config.PERFIS / "nao" / "existe" / "midia.mp4"), False)
 
+# ===========================================================================
+# T13 — os criterios de coleta
+#
+# Tudo aqui roda sem rede e sem gastar dolar. As afirmacoes sobre o Actor que
+# NAO dava para conferir de graca foram medidas contra ele em 30/08/2026 e
+# estao registradas na T13; o que se confere aqui e a nossa parte.
+# ===========================================================================
+
+print("\nCriterios: a hashtag")
+
+conferir("termo com espaco vira tag",
+         coletor.tag_do_termo("Receitas de Bolo Caseiro"),
+         "receitasdebolocaseiro")
+
+# `[MEDIDO 30/08/2026]` `receitasfaceis` veio ACENTUADA nas hashtags reais de
+# @receitasdepai. A primeira versao disto derrubava o acento com NFKD — e
+# `#receitasfaceis` e `#receitasfáceis` sao duas tags diferentes, com feeds
+# diferentes. Pedir uma e receber outra e o tipo de erro que ninguem percebe.
+conferir("o ACENTO sobrevive: e outra tag sem ele",
+         coletor.tag_do_termo("Receitas Fáceis"), "receitasfáceis")
+conferir("a funcao e idempotente — tag ja valida passa intacta",
+         coletor.tag_do_termo(coletor.tag_do_termo("Receitas Fáceis")),
+         "receitasfáceis")
+conferir("sublinhado sobrevive, que o Instagram aceita",
+         coletor.tag_do_termo("#comida_boa!"), "comida_boa")
+conferir_que("na URL o acento vai codificado, nao cru",
+             coletor.url_da_tag("Receitas Fáceis").endswith(
+                 "/tags/receitasf%C3%A1ceis/"))
+conferir("pontuacao e maiuscula somem",
+         coletor.tag_do_termo("Apostas! #Tigrinho"), "apostastigrinho")
+conferir("termo vazio nao estoura", coletor.tag_do_termo(None), "")
+conferir("a URL da tag e a que funciona",
+         coletor.url_da_tag("Receitas"),
+         "https://www.instagram.com/explore/tags/receitas/")
+
+print("\nCriterios: a banda de seguidores")
+
+conferir("dentro da banda passa",
+         coletor.na_banda({"seguidores": 172465}, 10000, 500000), True)
+conferir("abaixo do minimo nao passa",
+         coletor.na_banda({"seguidores": 9999}, 10000, 500000), False)
+conferir("acima do maximo nao passa",
+         coletor.na_banda({"seguidores": 3139033}, 10000, 500000), False)
+conferir("o limite exato passa: a banda e inclusiva",
+         coletor.na_banda({"seguidores": 10000}, 10000, 500000), True)
+conferir("sem contagem de seguidores devolve None, e None NAO e False",
+         coletor.na_banda({"usuario": "veio_da_hashtag"}, 10000, 500000), None)
+conferir("perfil privado nao passa, mesmo dentro da banda",
+         coletor.na_banda({"seguidores": 50000, "privado": True},
+                          10000, 500000), False)
+conferir("privado passa se somente_publicos estiver desligado",
+         coletor.na_banda({"seguidores": 50000, "privado": True},
+                          10000, 500000, somente_publicos=False), True)
+conferir("sem minimo, so o teto vale",
+         coletor.na_banda({"seguidores": 12}, None, 500000), True)
+conferir("sem maximo, so o piso vale",
+         coletor.na_banda({"seguidores": 9000000}, 10000, None), True)
+
+print("\nCriterios: os donos dos posts da tag")
+
+ITENS_DA_TAG = [
+    {"ownerUsername": "mf.meatfreaks", "ownerFullName": "Marcos Felipe",
+     "ownerId": "2970100025", "shortCode": "AAA"},
+    {"ownerUsername": "mf.meatfreaks", "shortCode": "BBB"},
+    {"ownerUsername": "leonardoriverob", "shortCode": "CCC"},
+    {"error": "no_items", "errorDescription": "Empty or private data"},
+    {"nao_e_dicionario": True},
+]
+
+donos = coletor.donos_dos_posts(ITENS_DA_TAG)
+conferir("dois posts do mesmo dono viram um candidato so", len(donos), 2)
+conferir("o nome do dono vem junto", donos[0]["nome"], "Marcos Felipe")
+conferir("o id da plataforma vem junto", donos[0]["perfil_id"], "2970100025")
+conferir("item de erro nao vira candidato",
+         [d["usuario"] for d in donos],
+         ["mf.meatfreaks", "leonardoriverob"])
+conferir("lista vazia devolve lista vazia", coletor.donos_dos_posts([]), [])
+
+print("\nCriterios: o post fixado")
+
+FIXADO_CRU = dict(REEL_CRU, isPinned=True)
+conferir("isPinned=True vira fixado=True",
+         coletor.normalizar_post(FIXADO_CRU)["fixado"], True)
+conferir("isPinned=False vira fixado=False",
+         coletor.normalizar_post(dict(REEL_CRU, isPinned=False))["fixado"],
+         False)
+conferir("sem o campo, fixado e None — nao saber nao e saber que nao",
+         coletor.normalizar_post(REEL_CRU)["fixado"], None)
+
+
+class _RunFalso:
+    """O que a Apify devolve, sem a Apify."""
+
+    id = "run-de-mentira"
+    status = "SUCCEEDED"
+    status_message = None
+    default_dataset_id = "ds"
+    usage_total_usd = 0.0
+
+
+def _coletor_dube(itens):
+    """Um ApifyInstagramCollector que nunca sai da maquina.
+
+    O que interessa testar e a ENTRADA que ele monta — e a entrada e o unico
+    lugar do projeto onde criterio vira dinheiro economizado.
+    """
+    dube = coletor.ApifyInstagramCollector(token="token-de-mentira")
+    entradas = []
+
+    def _rodar_falso(entrada, max_itens):
+        entradas.append((dict(entrada), max_itens))
+        return list(itens), _RunFalso(), 1
+
+    dube._rodar = _rodar_falso
+    return dube, entradas
+
+
+print("\nCriterios: a entrada que vai para o Actor")
+
+dube, entradas = _coletor_dube([REEL_CRU])
+dube.coletar_conteudo(["receitasdepai"], 10, janela_dias=30, tipo="reels")
+entrada = entradas[0][0]
+conferir("janela_dias vira onlyPostsNewerThan em dias",
+         entrada.get("onlyPostsNewerThan"), "30 days")
+conferir("tipo=reels vira resultsType=reels", entrada.get("resultsType"), "reels")
+
+dube, entradas = _coletor_dube([REEL_CRU])
+dube.coletar_conteudo(["receitasdepai"], 10, janela_dias=None, tipo="posts")
+entrada = entradas[0][0]
+conferir_que("sem janela, o campo de data nem e enviado",
+             "onlyPostsNewerThan" not in entrada)
+conferir("tipo=posts continua pedindo posts", entrada.get("resultsType"), "posts")
+
+dube, entradas = _coletor_dube([PERFIL_CRU])
+dube.descobrir_perfis("receitas", 40, eixo="nome")
+conferir("o eixo nome busca por usuario",
+         entradas[0][0].get("searchType"), "user")
+
+dube, entradas = _coletor_dube(ITENS_DA_TAG)
+achou = dube.descobrir_perfis("receitas", 40, eixo="hashtag")
+entrada = entradas[0][0]
+conferir("o eixo hashtag vai por directUrls, e nao por searchType",
+         entrada.get("directUrls"),
+         ["https://www.instagram.com/explore/tags/receitas/"])
+conferir_que("o eixo hashtag NAO usa searchType — foi medido que nao funciona",
+             "searchType" not in entrada)
+conferir("os donos dos posts viram perfis candidatos",
+         sorted(p["usuario"] for p in achou.perfis),
+         ["leonardoriverob", "mf.meatfreaks"])
+conferir("candidato de hashtag nasce sem seguidores, e por isso indefinido",
+         coletor.na_banda(achou.perfis[0], 10000, 500000), None)
+
+dube, entradas = _coletor_dube([])
+try:
+    dube.descobrir_perfis("receitas", 40, eixo="lua")
+    conferir_que("eixo inventado devia estourar", False)
+except coletor.ErroDeColeta as erro:
+    conferir_que("eixo inventado estoura com o nome dos que existem",
+                 "hashtag" in str(erro) and "nome" in str(erro))
+
+dube, entradas = _coletor_dube([PERFIL_CRU])
+dube.qualificar(["mf.meatfreaks", "leonardoriverob"])
+entrada = entradas[0][0]
+conferir("qualificar pede os detalhes dos candidatos",
+         entrada.get("resultsType"), "details")
+conferir("qualificar monta uma URL por candidato",
+         len(entrada.get("directUrls")), 2)
+
+dube, entradas = _coletor_dube([PERFIL_CRU])
+conferir("qualificar sem ninguem nao chama a Apify",
+         len(dube.qualificar([]).perfis), 0)
+conferir_que("e nao gasta uma rodada sequer", entradas == [])
+
+print("\nCriterios: a faixa da linha de comando")
+
+conferir("MIN-MAX vira par", pipeline._faixa("10000-500000"), (10000, 500000))
+conferir("so o teto", pipeline._faixa("-500000"), (None, 500000))
+conferir("so o piso", pipeline._faixa("10000-"), (10000, None))
+conferir("faixa vazia nao decide nada", pipeline._faixa(""), (None, None))
+
+try:
+    pipeline._faixa("10000")
+    conferir_que("faixa sem hifen devia estourar", False)
+except ValueError as erro:
+    conferir_que("faixa sem hifen explica o formato certo",
+                 "MIN-MAX" in str(erro))
+
+
+print("\nT14: colher vocabulario dos itens")
+
+ITENS_COM_TAGS = [
+    {"ownerUsername": "a", "hashtags": ["Receitas", "publi", "#Bolo"]},
+    {"ownerUsername": "b", "hashtags": ["receitas", "publi"]},
+    {"ownerUsername": "c", "hashtags": ["RECEITAS"]},
+    {"error": "no_items"},
+    "isto nao e dicionario",
+]
+
+colhido = coletor.tags_dos_itens(ITENS_COM_TAGS, fonte="#receitas")
+conferir("a mesma tag em caixas diferentes e UMA tag",
+         colhido["receitas"]["posts"], 3)
+conferir("e conta os tres perfis distintos",
+         sorted(colhido["receitas"]["perfis"]), ["a", "b", "c"])
+conferir("o # do inicio nao vira parte da tag", "bolo" in colhido, True)
+conferir("item de erro nao contamina o vocabulario", "no_items" in colhido, False)
+conferir("a fonte fica registrada", colhido["receitas"]["fonte"], "#receitas")
+
+# O eixo de perfil relacionado devolve `details`, e ali os posts vem
+# aninhados. Sem desaninhar, mapear por relacionado nao renderia vocabulario.
+ANINHADO = [{"username": "d",
+             "latestPosts": [{"hashtags": ["tragedia", "resgate"]},
+                             {"hashtags": ["tragedia"]}]}]
+colhido = coletor.tags_dos_itens(ANINHADO)
+conferir("hashtag de post aninhado no perfil e colhida",
+         colhido["tragedia"]["posts"], 2)
+conferir("e o dono do perfil e creditado",
+         colhido["resgate"]["perfis"], ["d"])
+conferir("sem itens nao estoura", coletor.tags_dos_itens(None), {})
+
+
+print("\nT14: as chamadas dos dois eixos do mapeamento")
+
+dube, entradas = _coletor_dube(ITENS_COM_TAGS)
+coleta = dube.mapear_tag("receitasfáceis", 30)
+entrada = entradas[0][0]
+conferir_que("mapear_tag abre a aba da tag",
+             entrada["directUrls"][0].endswith("/tags/receitasf%C3%A1ceis/"))
+conferir("mapear_tag pede posts, que e onde as hashtags moram",
+         entrada["resultsType"], "posts")
+conferir_que("mapear_tag GUARDA os itens crus — sem eles nao ha vocabulario",
+             len(coleta.brutos) == len(ITENS_COM_TAGS))
+conferir("e os donos viram candidatos",
+         sorted(p["usuario"] for p in coleta.perfis), ["a", "b", "c"])
+
+RELACIONADOS = [{"username": "receitasdepai", "followersCount": 3139033,
+                 "relatedProfiles": [{"username": "gordicesdateka"},
+                                     {"username": "cozinhadojuba"},
+                                     {"nao_tem_username": True}]}]
+dube, entradas = _coletor_dube(RELACIONADOS)
+relacoes, coleta = dube.relacionados_de(["receitasdepai"])
+conferir("relacionados_de pede os detalhes do perfil",
+         entradas[0][0]["resultsType"], "details")
+conferir("o mapa liga o perfil aos parecidos",
+         relacoes["receitasdepai"], ["gordicesdateka", "cozinhadojuba"])
+conferir_que("relacionado sem username e descartado, nao vira None",
+             None not in relacoes["receitasdepai"])
+conferir_que("os itens crus vem junto, para colher as hashtags deles",
+             len(coleta.brutos) == 1)
+
+dube, entradas = _coletor_dube(RELACIONADOS)
+relacoes, coleta = dube.relacionados_de([])
+conferir("sem ninguem para expandir, nao gasta rodada", entradas, [])
+conferir("e devolve mapa vazio", relacoes, {})
+
+
 shutil.rmtree(TEMPORARIA, ignore_errors=True)
 
 print("\n" + "=" * 52)

@@ -84,18 +84,84 @@ def fundir_contagens(acumulado, novo):
     trivial; o cuidado esta em `perfis`, que e uniao de conjunto e nao soma —
     o mesmo perfil aparecendo em duas rodadas continua sendo um perfil.
     """
-    saida = {tag: {"posts": d["posts"], "perfis": list(d["perfis"]),
-                   "fonte": d.get("fonte")}
-             for tag, d in (acumulado or {}).items()}
+    def _zerado(fonte=None):
+        return {"posts": 0, "perfis": [], "idiomas": {"pt": 0, "es": 0, "?": 0},
+                "fonte": fonte}
+
+    saida = {}
+    for tag, dados in (acumulado or {}).items():
+        linha = _zerado(dados.get("fonte"))
+        linha["posts"] = dados["posts"]
+        linha["perfis"] = list(dados["perfis"])
+        linha["idiomas"].update(dados.get("idiomas") or {})
+        saida[tag] = linha
 
     for tag, dados in (novo or {}).items():
-        linha = saida.setdefault(tag, {"posts": 0, "perfis": [],
-                                       "fonte": dados.get("fonte")})
+        linha = saida.setdefault(tag, _zerado(dados.get("fonte")))
         linha["posts"] += dados["posts"]
+        for lingua, votos in (dados.get("idiomas") or {}).items():
+            linha["idiomas"][lingua] = linha["idiomas"].get(lingua, 0) + votos
         for perfil in dados["perfis"]:
             if perfil not in linha["perfis"]:
                 linha["perfis"].append(perfil)
     return saida
+
+
+def idioma_da_tag(dados):
+    """O idioma que a maioria dos posts daquela tag falava.
+
+    `None` quando ninguem opinou ou quando deu empate — e `None` aqui NAO
+    autoriza descarte. Foi a mitigacao combinada em 30/08/2026: descarta-se o
+    que foi positivamente detectado como outro idioma, nunca o que nao se sabe.
+    Descartar o desconhecido mataria calado a tag do post sem legenda.
+    """
+    votos = (dados or {}).get("idiomas") or {}
+    pt, es = votos.get("pt", 0), votos.get("es", 0)
+    if pt == es:
+        return None
+    return "pt" if pt > es else "es"
+
+
+def e_de_outro_idioma(dados, alvo):
+    """Esta tag foi PROVADA de outro idioma que nao o alvo?
+
+    `alvo = "qualquer"` desliga o filtro inteiro.
+    """
+    if not alvo or alvo == "qualquer":
+        return False
+    achado = idioma_da_tag(dados)
+    return achado is not None and achado != alvo
+
+
+def ranquear_perfis(contagens, top_de_tags=10, limite=None):
+    """Quem e NUCLEO do nicho, e nao quem passou por ali.
+
+    Pontua o perfil por em quantas das tags mais fortes ele aparece. A
+    informacao ja esta toda em `contagens` — cada tag guarda a lista de perfis
+    que a usaram —, entao isto nao custa uma chamada sequer.
+
+    `[MEDIDO 30/08/2026]` Existe porque a versao anterior escolhia por ordem de
+    chegada (`candidatos[:3]`, `sem_numero[:12]`), e a aba da tag vem ordenada
+    por RECENCIA. A amostra puxava para conta recem-postada e pequena: a
+    mediana medida deu 1.435 seguidores.
+    """
+    ranking = ranquear_termos(contagens, limite=top_de_tags)
+    fortes = {linha["termo"] for linha in ranking}
+
+    por_perfil = {}
+    for tag, dados in (contagens or {}).items():
+        for usuario in dados["perfis"]:
+            linha = por_perfil.setdefault(usuario, {"usuario": usuario,
+                                                    "tags_fortes": 0,
+                                                    "tags": 0})
+            linha["tags"] += 1
+            if tag in fortes:
+                linha["tags_fortes"] += 1
+
+    ordenado = sorted(por_perfil.values(),
+                      key=lambda l: (-l["tags_fortes"], -l["tags"],
+                                     l["usuario"]))
+    return ordenado[:limite] if limite else ordenado
 
 
 def ranquear_termos(contagens, minimo_de_perfis=1, limite=None):
@@ -116,6 +182,8 @@ def ranquear_termos(contagens, minimo_de_perfis=1, limite=None):
          "perfis": len(dados["perfis"]),
          "posts": dados["posts"],
          "quem": sorted(dados["perfis"])[:5],
+         "idioma": idioma_da_tag(dados) or "?",
+         "votos": dict(dados.get("idiomas") or {}),
          "fonte": dados.get("fonte")}
         for tag, dados in (contagens or {}).items()
         if len(dados["perfis"]) >= minimo_de_perfis
@@ -247,7 +315,7 @@ def _ritmo(posts):
 
 
 def montar_dossie(tema, contagens, perfis, posts=None, custo_usd=0.0,
-                  rodadas=0, parou_por=None, limite_de_tags=40):
+                  rodadas=0, parou_por=None, limite_de_tags=40, alvo="pt"):
     """O que o mapeamento aprendeu, pronto para voce marcar o que presta.
 
     Tudo nasce com `"entra": false`. Nada entra sozinho — decisao do usuario em
@@ -255,7 +323,18 @@ def montar_dossie(tema, contagens, perfis, posts=None, custo_usd=0.0,
     dizer se `#caso` e tragedia ou novela e semantica. A maquina traz os
     numeros; quem le portugues e voce.
     """
-    tags = ranquear_termos(contagens, limite=limite_de_tags)
+    todas = ranquear_termos(contagens)
+
+    # O descartado NAO some. Vai para uma secao propria, com o idioma detectado
+    # e os votos que o sustentam. O detector e heuristico e vai errar; erro que
+    # some do arquivo e erro que ninguem conserta.
+    tags, descartadas = [], []
+    for linha in todas:
+        alvo_lista = descartadas if e_de_outro_idioma(
+            contagens.get(linha["termo"]), alvo) else tags
+        alvo_lista.append(linha)
+
+    tags = tags[:limite_de_tags]
     numeros = numeros_do_nicho(perfis, posts)
 
     return {
@@ -268,8 +347,15 @@ def montar_dossie(tema, contagens, perfis, posts=None, custo_usd=0.0,
         "_como_aprovar": ("Marque \"entra\": true no que presta e rode "
                           "`pipeline.py mapear aplicar \"%s\"`. O que ficar "
                           "false nao vai para o banco." % tema),
+        "idioma_alvo": alvo,
         "numeros": numeros,
         "tags": [dict(linha, entra=False) for linha in tags],
+        "_sobre_os_descartados": (
+            "Detectados em outro idioma que nao %r. Ficam aqui em vez de "
+            "sumir: o detector e heuristico, e se ele errou basta mover a "
+            "linha para `tags` e marcar entra=true." % alvo),
+        "descartados_por_idioma": [dict(linha, entra=False)
+                                   for linha in descartadas[:limite_de_tags]],
         "perfis": [
             {"usuario": p.get("usuario"),
              "seguidores": p.get("seguidores"),

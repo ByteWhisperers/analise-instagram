@@ -35,6 +35,8 @@ esse motivo.
 import time
 from datetime import datetime, timezone
 
+import idioma
+
 ACTOR_PADRAO = "apify/instagram-scraper"
 
 # Precos publicados pela Apify em 26/08/2026, por 1.000 resultados.
@@ -368,7 +370,12 @@ def na_banda(perfil, minimo=None, maximo=None, somente_publicos=True):
 def tags_dos_itens(itens, fonte=None):
     """Itens crus -> o vocabulario que eles carregam, com a evidencia.
 
-    Devolve `{tag: {"posts": n, "perfis": [usuarios], "fonte": ...}}`.
+    Devolve `{tag: {"posts": n, "perfis": [usuarios], "idiomas": {...},
+    "fonte": ...}}`.
+
+    Os votos de idioma vem da LEGENDA do post em que a tag apareceu, e nao da
+    tag em si: `#seguridad` e espanhola pelo texto ao redor, nao por si mesma
+    — `#nepal` e `#brasil` nao teriam idioma nenhum se olhassemos so a palavra.
 
     **O numero que importa e `perfis`, nao `posts`.** Medido em 30/08/2026:
     colhendo as hashtags de @receitasdepai vieram `publi`, `MercadoLivre`,
@@ -381,15 +388,28 @@ def tags_dos_itens(itens, fonte=None):
     achado = {}
 
     def _somar(bruto, dono):
-        for tag in (bruto.get("hashtags") or []):
+        tags = bruto.get("hashtags") or []
+        if not tags:
+            return
+
+        # Uma deteccao por post, reaproveitada por todas as tags dele: a
+        # legenda e a mesma, e detectar dez vezes o mesmo texto seria so gastar
+        # CPU para chegar na mesma resposta.
+        voto = idioma.detectar(_primeiro(bruto, "caption", "text", padrao=""))
+        voto = "?" if voto is None else voto
+
+        for tag in tags:
             if not isinstance(tag, str) or not tag.strip():
                 continue
             chave = tag_do_termo(tag.lstrip("#"))
             if not chave:
                 continue
             linha = achado.setdefault(chave, {"posts": 0, "perfis": [],
+                                              "idiomas": {"pt": 0, "es": 0,
+                                                          "?": 0},
                                               "fonte": fonte})
             linha["posts"] += 1
+            linha["idiomas"][voto] += 1
             if dono and dono not in linha["perfis"]:
                 linha["perfis"].append(dono)
 

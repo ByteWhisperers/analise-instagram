@@ -295,6 +295,11 @@ conferir("sem secao, satura em 20%", padrao["saturacao"], 0.20)
 conferir("sem secao, 30 itens por tag", padrao["itens_por_tag"], 30)
 conferir("sem secao, mede ate 12 perfis para a distribuicao",
          padrao["perfis_para_medir"], 12)
+conferir("sem secao, o alvo e portugues", padrao["idioma"], "pt")
+conferir("o alvo e ajustavel, e 'qualquer' desliga o filtro",
+         config.mapeamento(dict(VAZIO,
+                                mapeamento={"idioma": "qualquer"}))["idioma"],
+         "qualquer")
 
 conferir("o config manda mais que o padrao",
          config.mapeamento(dict(VAZIO, mapeamento={"teto_usd": 0.05}))["teto_usd"],

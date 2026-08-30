@@ -242,6 +242,104 @@ except mapeador.ErroDeMapeamento as erro:
     conferir_que("dossie inexistente explica como criar",
                  "mapear" in str(erro))
 
+print("\n=== T15: o idioma da tag, e o que se faz com ele ===")
+
+ESPANHOLA = {"posts": 9, "perfis": ["a", "b"],
+             "idiomas": {"pt": 0, "es": 7, "?": 2}, "fonte": "#x"}
+PORTUGUESA = {"posts": 5, "perfis": ["c"],
+              "idiomas": {"pt": 4, "es": 1, "?": 0}, "fonte": "#x"}
+MUDA = {"posts": 6, "perfis": ["d"],
+        "idiomas": {"pt": 0, "es": 0, "?": 6}, "fonte": "#x"}
+EMPATE = {"posts": 4, "perfis": ["e"],
+          "idiomas": {"pt": 2, "es": 2, "?": 0}, "fonte": "#x"}
+
+conferir("maioria espanhola", mapeador.idioma_da_tag(ESPANHOLA), "es")
+conferir("maioria portuguesa", mapeador.idioma_da_tag(PORTUGUESA), "pt")
+conferir("so mudos nao elegem", mapeador.idioma_da_tag(MUDA), None)
+conferir("empate nao elege", mapeador.idioma_da_tag(EMPATE), None)
+
+conferir("espanhola e descartada quando o alvo e pt",
+         mapeador.e_de_outro_idioma(ESPANHOLA, "pt"), True)
+conferir("portuguesa fica", mapeador.e_de_outro_idioma(PORTUGUESA, "pt"), False)
+
+# A mitigacao combinada: descarta-se o que foi PROVADO de outro idioma, nunca o
+# que nao se sabe. Descartar o desconhecido mataria calado a tag do post sem
+# legenda — e o pedido foi descartar o que nao e portugues, nao o que nao se
+# sabe se e.
+conferir("a tag MUDA nao e descartada: nao saber nao e saber que nao",
+         mapeador.e_de_outro_idioma(MUDA, "pt"), False)
+conferir("nem a empatada", mapeador.e_de_outro_idioma(EMPATE, "pt"), False)
+conferir("com alvo 'qualquer' nada e descartado",
+         mapeador.e_de_outro_idioma(ESPANHOLA, "qualquer"), False)
+conferir("sem alvo nenhum, nada e descartado",
+         mapeador.e_de_outro_idioma(ESPANHOLA, None), False)
+
+conferir("fundir soma os votos de idioma",
+         mapeador.fundir_contagens({"t": ESPANHOLA}, {"t": PORTUGUESA})
+         ["t"]["idiomas"],
+         {"pt": 4, "es": 8, "?": 2})
+conferir("fundir com quem nao tem idiomas nao estoura",
+         mapeador.fundir_contagens(
+             {"t": {"posts": 1, "perfis": ["z"], "fonte": None}},
+             {})["t"]["idiomas"], {"pt": 0, "es": 0, "?": 0})
+
+ranking = mapeador.ranquear_termos({"es_tag": ESPANHOLA, "pt_tag": PORTUGUESA,
+                                    "muda": MUDA})
+conferir("o ranking carrega o idioma detectado",
+         {l["termo"]: l["idioma"] for l in ranking},
+         {"es_tag": "es", "pt_tag": "pt", "muda": "?"})
+
+
+print("\n=== T15: quem e nucleo do nicho, e nao quem passou por ali ===")
+
+# `a` aparece em tres tags, `d` numa so. Antes a escolha era por ordem de
+# chegada, e a aba da tag vem por recencia — media-se quem tinha postado por
+# ultimo.
+TEIA = {
+    "forte1": {"posts": 9, "perfis": ["a", "b", "c"], "idiomas": {}, "fonte": None},
+    "forte2": {"posts": 8, "perfis": ["a", "b"], "idiomas": {}, "fonte": None},
+    "forte3": {"posts": 7, "perfis": ["a"], "idiomas": {}, "fonte": None},
+    "fraca": {"posts": 1, "perfis": ["d"], "idiomas": {}, "fonte": None},
+}
+nucleo = mapeador.ranquear_perfis(TEIA)
+conferir("quem aparece em mais tags fortes vem primeiro",
+         [l["usuario"] for l in nucleo], ["a", "b", "c", "d"])
+conferir("e conta em quantas", nucleo[0]["tags_fortes"], 3)
+conferir("o limite corta", len(mapeador.ranquear_perfis(TEIA, limite=2)), 2)
+conferir("sem contagens, ninguem", mapeador.ranquear_perfis({}), [])
+
+
+print("\n=== T15: o descartado nao some do dossie ===")
+
+COM_ESPANHOL = {"emergencias": ESPANHOLA, "receita": PORTUGUESA,
+                "nepal": MUDA}
+dossie_pt = mapeador.montar_dossie("tema", COM_ESPANHOL, [], [], alvo="pt")
+
+# `nepal` vem antes de `receita` porque empatam em perfis (1) e desempatam
+# por posts (6 contra 5) — a ordem e a do ranqueamento, nao a do alfabeto.
+conferir("a espanhola sai da lista principal",
+         [t["termo"] for t in dossie_pt["tags"]], ["nepal", "receita"])
+conferir("mas aparece na secao de descartados",
+         [t["termo"] for t in dossie_pt["descartados_por_idioma"]],
+         ["emergencias"])
+conferir_que("com o idioma que a condenou",
+             dossie_pt["descartados_por_idioma"][0]["idioma"] == "es")
+conferir_que("e com os votos, para voce conferir o veredito",
+             dossie_pt["descartados_por_idioma"][0]["votos"]["es"] == 7)
+conferir_que("o dossie explica que da para repescar",
+             "mover a linha" in dossie_pt["_sobre_os_descartados"])
+conferir("o alvo fica registrado", dossie_pt["idioma_alvo"], "pt")
+conferir_que("descartado tambem nasce entra=false",
+             all(t["entra"] is False
+                 for t in dossie_pt["descartados_por_idioma"]))
+
+dossie_qualquer = mapeador.montar_dossie("tema", COM_ESPANHOL, [], [],
+                                         alvo="qualquer")
+conferir("com alvo 'qualquer' nada e descartado",
+         len(dossie_qualquer["descartados_por_idioma"]), 0)
+conferir("e as tres ficam na lista principal",
+         len(dossie_qualquer["tags"]), 3)
+
 shutil.rmtree(TEMPORARIA, ignore_errors=True)
 
 print("\n" + "=" * 52)

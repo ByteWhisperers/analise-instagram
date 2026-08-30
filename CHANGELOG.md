@@ -4,6 +4,73 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-08-30 (3) — o mapeamento aprende a ver idioma, e o acento vira decisão
+
+A descrição honesta do processo de mapeamento, feita depois de três rodadas
+reais, expôs cinco defeitos. Quatro foram corrigidos.
+
+#### O defeito central
+
+A primeira porta que abria decidia tudo: `#desastres` rendeu vocabulário, então
+`#tragedias` **nunca foi tentada**. E `#desastres` é tag hispanófona — o
+mapeamento inteiro foi parar em defesa civil peruana, e o avanço guloso
+aprofundou nesse cluster por três rodadas pagas.
+
+#### O que mudou
+
+- **Todas as sementes** são tentadas, não só a primeira que render
+- **`src/idioma.py`** — separa português de espanhol por heurística explícita,
+  sem instalar nada (§14). Três estados: `pt`, `es` e **`None` para "não sei"**
+- O filtro age **na exploração** (tag espanhola não vira alvo da rodada
+  seguinte, e é aí que ele economiza), **no dossiê** e no banco
+- **Ritmo de postagem**, que estava vazio por desperdício: `_montar()` já
+  desaninhava os posts datados, e o `mapear` os jogava fora
+- **Amostra por relevância** — quem aparece em mais tags fortes, e não quem
+  chegou primeiro
+
+#### Medido, antes e depois, no mesmo tema com o mesmo teto
+
+| | antes | depois |
+|---|---|---|
+| sementes tentadas | 2 | 3 |
+| ritmo | `None` | 0,7 dias |
+| mediana de seguidores | 1.435 | 2.293 |
+
+#### O achado: o acento decide a comunidade
+
+`tag_do_termo()` preserva acento desde a T13, e a consequência só apareceu
+agora:
+
+| tema | semente | idioma | banda medida |
+|---|---|---|---|
+| "desastres e tragedias" | `#tragedias` | es | 811–5.647 |
+| "tragédias e resgates" | `#tragédias` | **pt** | 1.484–205.812 |
+
+Com acento vieram `#notícias`, `#acidenteaéreo` e
+`#atlasdigitaldedesastresnobrasil`. **`#tragedias` e `#tragédias` são duas
+comunidades diferentes, em dois idiomas** — e a diferença, no que se digita, é
+um acento.
+
+#### O filtro duro tem um custo, e ele ficou visível
+
+Com o tema sem acento, o filtro descartou `#desastres` (21 perfis) e
+`#tragedias` (20 perfis) — as duas mais fortes — e o topo virou ruído
+(`#esquilo`, `#greekliterature`). O detector não errou: aquelas legendas são
+espanholas. **O tema, escrito assim, vive em espanhol.** As 40 descartadas
+ficam no dossiê com idioma e votos, e voltam movendo a linha.
+
+#### Dois defeitos que os testes pegaram no detector
+
+- Um dígrafo sozinho decidia: `"llama"` virava espanhol. Limiar subiu para 3.
+- `que`, `mas` e `como` estavam na lista espanhola, e são portuguesas
+  comuníssimas.
+
+#### Verificação
+
+**820 conferências, zero falhas**, em 13 arquivos (eram 762). Custo das duas
+rodadas de campo: US$ 0,054.
+
+
 ### 2026-08-30 (2) — o mapeamento: a fase que faltava antes da busca
 
 O sistema tinha um regime só: você já sabia o termo, pedia, recebia. Isso

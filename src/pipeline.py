@@ -111,7 +111,7 @@ def _registrar_custo(conexao, operacao, coleta, coleta_id):
 
 
 def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
-           itens_por_tag=None, aplicar=False):
+           itens_por_tag=None, aplicar=False, idioma_alvo=None):
     """Tema em portugues comum -> vocabulario, perfis-semente e numeros.
 
     A fase que faltava. Ate a T13 o sistema so sabia buscar: voce ja sabia o
@@ -134,6 +134,7 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
     rodadas = rodadas or mapa["rodadas"]
     saturacao = saturacao or mapa["saturacao"]
     itens_por_tag = itens_por_tag or mapa["itens_por_tag"]
+    idioma_alvo = idioma_alvo or mapa["idioma"]
 
     sementes = mapeador.sementes_do_tema(tema)
     if not sementes:
@@ -147,6 +148,8 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
         ("rodadas", rodadas),
         ("satura em", "%d%% de novidade" % (saturacao * 100)),
         ("itens por tag", itens_por_tag),
+        ("idioma", "%s (descarta o que for provado de outro)" % idioma_alvo
+                   if idioma_alvo != "qualquer" else "qualquer"),
     ])
 
     coletor = _montar_coletor(cfg)
@@ -179,15 +182,25 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
 
         for rodada in range(1, rodadas + 1):
             if rodada == 1:
-                # Todas as sementes entram na fila, mas o laco abaixo para na
-                # primeira que render vocabulario: as rodadas seguintes alargam
-                # a partir dela, e nao ha por que pagar por todas as portas de
-                # entrada quando uma ja abriu.
+                # TODAS as sementes, e nao so a primeira que render.
+                #
+                # `[MEDIDO 30/08/2026]` A versao anterior parava na primeira
+                # porta que abria. `#desastres` rendeu, entao `#tragedias`
+                # nunca foi tentada — e `#desastres` e tag hispanofona. A porta
+                # que abriu primeiro decidiu o idioma, o pais e o assunto de
+                # todo o mapeamento. Uma palavra a mais custa uma chamada; o
+                # cluster errado custa a rodada inteira.
                 alvos = list(sementes)
             else:
+                # PARTE B do filtro, e e aqui que ele economiza dinheiro: tag
+                # provada de outro idioma nao vira alvo da rodada seguinte.
+                # Descartar so no fim seria pagar para aprofundar no cluster
+                # que seria rejeitado depois.
                 alvos = [linha["termo"] for linha
                          in mapeador.ranquear_termos(contagens)
                          if linha["termo"] not in visitadas
+                         and not mapeador.e_de_outro_idioma(
+                             contagens.get(linha["termo"]), idioma_alvo)
                          ][:mapa["tags_por_rodada"]]
 
             if not alvos and rodada > 1:
@@ -220,16 +233,17 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
                 _linha("  #%-24s %2d itens, %3d termos no total"
                        % (tag, coleta.itens, len(contagens)))
 
-                # A semente que nao rendeu nada nao e o fim do mapeamento: e so
-                # uma porta que nao abriu. `#desastresetragedias` devolveu zero
-                # termos em 30/08/2026 — `#desastres` e `#tragedias` e que sao
-                # as portas. Com vocabulario na mao, para de tentar sementes.
-                if rodada == 1 and contagens:
-                    break
-
             # Eixo 2: parte de um perfil que ja apareceu, e nao de uma palavra.
             # `[MEDIDO 30/08/2026]` @receitasdepai devolveu 15 relacionados.
-            candidatos = [u for u in perfis if u not in expandidos]
+            # PARTE D: quem aparece em mais tags fortes, e nao quem chegou
+            # primeiro. A aba da tag vem por recencia, entao ordem de chegada
+            # significava "quem postou por ultimo".
+            nucleo = [linha["usuario"] for linha
+                      in mapeador.ranquear_perfis(contagens)
+                      if linha["usuario"] in perfis]
+            candidatos = ([u for u in nucleo if u not in expandidos]
+                          + [u for u in perfis
+                             if u not in expandidos and u not in nucleo])
             if parou_por != "teto" and candidatos and _cabe(reserva=por_rodada):
                 alvos_perfis = candidatos[:mapa["perfis_para_expandir"]]
                 try:
@@ -247,6 +261,11 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
                                                fonte="relacionados"))
                 for perfil in coleta.perfis:
                     perfis.setdefault(perfil["usuario"], {}).update(perfil)
+                # PARTE C: os `latestPosts` do item de perfil vem datados, e
+                # `_montar()` ja os normalizou. Antes eram jogados fora aqui, e
+                # por isso `ritmo_dias_entre_posts` saia None num dossie que
+                # tinha 12 posts datados por perfil ja pagos.
+                posts.extend(coleta.posts)
 
                 novos = 0
                 for dono, parecidos in relacoes.items():
@@ -272,8 +291,14 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
         # `addParentData`. Sem esta chamada a "banda sugerida" sai de qualquer
         # punhado de perfis que por acaso tinha numero, e uma banda medida
         # sobre tres contas de 100 seguidores nao serve para nada.
-        sem_numero = [u for u, p in perfis.items()
-                      if p.get("seguidores") is None]
+        # Mede primeiro quem e nucleo do nicho: a banda tem de descrever quem
+        # faz o assunto, nao quem passou pela tag.
+        nucleo = [linha["usuario"] for linha
+                  in mapeador.ranquear_perfis(contagens)]
+        sem_numero = ([u for u in nucleo
+                       if perfis.get(u, {}).get("seguidores") is None]
+                      + [u for u, p in perfis.items()
+                         if p.get("seguidores") is None and u not in nucleo])
         if sem_numero and _cabe():   # aqui sem reserva: esta E a reserva
             fila = sem_numero[:mapa["perfis_para_medir"]]
             _linha("Medindo %d perfil(is) para a distribuicao..." % len(fila))
@@ -286,6 +311,7 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
             real += medidos.custo_usd or 0
             for perfil in medidos.perfis:
                 perfis.setdefault(perfil["usuario"], {}).update(perfil)
+            posts.extend(medidos.posts)   # PARTE C, o outro lugar
             com_numero = sum(1 for p in perfis.values()
                              if p.get("seguidores") is not None)
             _linha("  %d perfil(is) com contagem de seguidores" % com_numero)
@@ -299,7 +325,8 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
 
     dossie = mapeador.montar_dossie(tema, contagens, list(perfis.values()),
                                     posts, custo_usd=real,
-                                    rodadas=rodada, parou_por=parou_por)
+                                    rodadas=rodada, parou_por=parou_por,
+                                    alvo=idioma_alvo)
     destino = mapeador.gravar_dossie(dossie)
 
     _linha()
@@ -310,11 +337,25 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
     _linha()
     _linha("As 10 mais fortes (por PERFIS distintos, nao por frequencia):")
     for linha in dossie["tags"][:10]:
-        _linha("  #%-26s %2d perfis  %3d posts" % (linha["termo"],
-                                                   linha["perfis"],
-                                                   linha["posts"]))
+        _linha("  #%-26s %2d perfis  %3d posts  [%s]"
+               % (linha["termo"], linha["perfis"], linha["posts"],
+                  linha["idioma"]))
+
+    fora = dossie["descartados_por_idioma"]
+    if fora:
+        _linha()
+        _linha("%d descartada(s) por idioma (as 5 primeiras). Nao sumiram: "
+               "estao no dossie." % len(fora))
+        for linha in fora[:5]:
+            _linha("  #%-26s %2d perfis  [%s]" % (linha["termo"],
+                                                  linha["perfis"],
+                                                  linha["idioma"]))
     banda = dossie["numeros"]["banda_sugerida"]
     _linha()
+    ritmo = dossie["numeros"]["ritmo_dias_entre_posts"]
+    _linha()
+    _linha("Ritmo: %s" % ("%.1f dias entre posts" % ritmo if ritmo
+                          else "nao deu para medir"))
     _linha("Banda sugerida: %s a %s seguidores"
            % (banda["seguidores_min"], banda["seguidores_max"]))
     _linha("  (%s)" % banda["por_que"])
@@ -354,7 +395,8 @@ def _mapear_aplicar(cfg, tema):
 
     with db.conectar(cfg) as cx:
         nicho_id = niches.obter_ou_criar(
-            cx, tema, palavras_chave=[t["termo"] for t in tags_sim])
+            cx, tema, palavras_chave=[t["termo"] for t in tags_sim],
+            idioma=dossie.get("idioma_alvo"))
 
         for linha in tags:
             niches.salvar_termo(cx, nicho_id, linha["termo"],
@@ -1203,6 +1245,9 @@ def ler_argumentos(argv=None):
     m.add_argument("--saturacao", type=float,
                    help="para quando a novidade cair abaixo disto (0.20)")
     m.add_argument("--itens-por-tag", type=int, dest="itens_por_tag")
+    m.add_argument("--idioma", dest="idioma_alvo",
+                   help="descarta o que for provado de outro idioma. "
+                        "'qualquer' desliga (padrão: pt)")
     m.add_argument("--aplicar", action="store_true",
                    help="grava no banco o que você marcou no dossiê")
 
@@ -1275,7 +1320,8 @@ def main(argv=None):
     try:
         if args.comando == "mapear":
             return mapear(cfg, args.tema, args.teto_usd, args.rodadas,
-                          args.saturacao, args.itens_por_tag, args.aplicar)
+                          args.saturacao, args.itens_por_tag, args.aplicar,
+                          args.idioma_alvo)
         if args.comando == "descobrir":
             eixos = [e.strip().lower() for e in (args.eixos or "").split(",")
                      if e.strip()]

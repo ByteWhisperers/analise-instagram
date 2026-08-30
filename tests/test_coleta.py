@@ -561,6 +561,32 @@ conferir("sem ninguem para expandir, nao gasta rodada", entradas, [])
 conferir("e devolve mapa vazio", relacoes, {})
 
 
+print("\nT15: a legenda decide o idioma da tag")
+
+ITENS_BILINGUES = [
+    {"ownerUsername": "a", "caption": "Simulacro de emergencias con los niños",
+     "hashtags": ["emergencias", "seguranca"]},
+    {"ownerUsername": "b",
+     "caption": "Prevenção de acidentes no trabalho, você precisa ver",
+     "hashtags": ["seguranca"]},
+    {"ownerUsername": "c", "caption": "🔥", "hashtags": ["nepal"]},
+]
+
+colhido = coletor.tags_dos_itens(ITENS_BILINGUES)
+conferir("tag de legenda espanhola recebe voto es",
+         colhido["emergencias"]["idiomas"], {"pt": 0, "es": 1, "?": 0})
+conferir("a mesma tag em dois idiomas guarda os dois votos",
+         colhido["seguranca"]["idiomas"], {"pt": 1, "es": 1, "?": 0})
+conferir("legenda sem sinal vota '?' e nao inventa idioma",
+         colhido["nepal"]["idiomas"], {"pt": 0, "es": 0, "?": 1})
+
+# O idioma vem da LEGENDA, nunca da tag: `#nepal` e `#brasil` nao teriam
+# idioma nenhum se olhassemos so a palavra.
+conferir_que("post sem legenda nenhuma nao estoura",
+             coletor.tags_dos_itens([{"ownerUsername": "z",
+                                      "hashtags": ["x"]}])["x"]["idiomas"]
+             == {"pt": 0, "es": 0, "?": 1})
+
 shutil.rmtree(TEMPORARIA, ignore_errors=True)
 
 print("\n" + "=" * 52)

@@ -178,6 +178,12 @@ def mapeamento(cfg):
     # banda sugerida sai de tres perfis quaisquer, que foi o que aconteceu na
     # primeira rodada real de 30/08/2026: "13 a 404 seguidores".
     secao.setdefault("perfis_para_medir", 12)
+    # O idioma que se quer mapear. `"qualquer"` desliga o filtro.
+    #
+    # Existe porque em 30/08/2026 o mapeamento de "desastres e tragedias"
+    # voltou inteiro em espanhol e o laco gastou tres rodadas aprofundando num
+    # cluster hispano-americano que seria rejeitado no fim.
+    secao.setdefault("idioma", "pt")
 
     teto = secao["teto_usd"]
     if not isinstance(teto, (int, float)) or teto <= 0:

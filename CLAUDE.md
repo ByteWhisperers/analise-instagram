@@ -46,6 +46,7 @@ Módulos de apoio, sem linha de comando própria:
 |---|---|
 | `src/config.py` | caminhos do projeto e leitura validada do `config.local.json` |
 | `src/mapeador.py` | ranquear, saturar, medir e montar o dossiê. Só função pura |
+| `src/idioma.py` | separa português de espanhol por heurística. Sem dependência nova |
 | `src/console.py` | faz stdout aguentar emoji. **Sem ele o `ranking` quebra** |
 | `src/preparar.py` | as 7 checagens do ambiente. Verifica e instrui, não instala |
 | `src/db.py` | conexão com o PostgreSQL e execução das migrations |
@@ -60,17 +61,18 @@ Módulos de apoio, sem linha de comando própria:
 | `src/desempenho.py` | engajamento, velocidade e score, só função pura |
 | `src/legenda.py` | palavras com tempo → `.ass` com karaokê |
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
-| `tests/test_mapeador.py` | 62 conferências do mapeamento, sem rede |
+| `tests/test_idioma.py` | 26 conferências do detector de idioma |
+| `tests/test_mapeador.py` | 88 conferências do mapeamento, sem rede |
 | `tests/test_metricas.py` | 34 conferências das contas |
 | `tests/test_banco.py` | 54 conferências do banco e das consultas |
-| `tests/test_coleta.py` | 135 conferências da normalização, storage, download, faxina e critérios |
+| `tests/test_coleta.py` | 139 conferências da normalização, storage, download, faxina e critérios |
 | `tests/test_desempenho.py` | 66 conferências dos scores e do crescimento |
-| `tests/test_db.py` | 106 conferências da conexão, das migrations e do config |
+| `tests/test_db.py` | 108 conferências da conexão, das migrations e do config |
 | `tests/test_preparar.py` | 26 conferências do preparo e da saída de console |
 | `tests/test_repos_*.py` | 279 conferências contra um PostgreSQL de verdade |
 
-**762 conferências, todas passando** (contadas na saída real, não estimadas).
-Rode as doze antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
+**820 conferências, todas passando** (contadas na saída real, não estimadas).
+Rode as treze antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
 o PostgreSQL de pé; se ele não responder, elas avisam e saem sem falhar.
 
 Apagados em 28/08/2026: `src/ig.py`, `src/buscar.py`, `src/coletar.py`,
@@ -99,6 +101,9 @@ desfazer, e isso travava faxina de código.
   dá US$ 5/mês. Três freios no código: estimativa com confirmação,
   `teto_usd_por_rodada` e `max_items`. Ver
   [ADR 005](docs/decisions/005-apify-em-vez-de-raspagem-propria.md).
+- **O acento do tema decide a comunidade.** `#tragedias` é espanhola;
+  `#tragédias` é portuguesa — são duas comunidades diferentes, e a diferença é
+  um acento no que você digita. Medido em 30/08/2026.
 - **Antes de buscar, mapeia.** Um tema em português comum não é uma hashtag:
   `#desastresetragedias` devolveu 1 item e zero termos, enquanto `#desastres`
   devolveu 64. O `mapear` descobre o vocabulário, mede a banda do nicho e

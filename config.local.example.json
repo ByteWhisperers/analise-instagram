@@ -50,7 +50,9 @@
     "tags_por_rodada": 2,
     "perfis_para_expandir": 3,
     "_perfis_para_medir": "O perfil que vem da aba da tag nao traz contagem de seguidores. Estes sao qualificados no fim so para a banda sugerida sair de uma amostra de verdade.",
-    "perfis_para_medir": 12
+    "perfis_para_medir": 12,
+    "_idioma": "Descarta a tag PROVADA de outro idioma (o detector tem tres estados, e o que ele nao sabe NAO e descartado). 'qualquer' desliga. Cuidado medido em 30/08/2026: se a comunidade do tema fala outra lingua, este filtro esvazia o resultado — `#tragedias` e espanhola, `#tragédias` e portuguesa.",
+    "idioma": "pt"
   },
   "descoberta": {
     "_leia": "Como achar perfil, e qual perfil serve. Substitui a antiga secao `busca`, que estava aqui e NINGUEM lia — a config prometia um filtro que nao acontecia. Toda variavel daqui tem flag espelho: `descobrir --eixos --seguidores MIN-MAX --max-qualificar`.",

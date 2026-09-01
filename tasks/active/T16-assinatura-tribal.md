@@ -118,7 +118,7 @@ A diferença de volume é o achado do lado do léxico: **legenda de nicho de mot
 O sistema aguenta os dois, mas a estatística é mais magra onde se fala menos.
 
 **A prova achou três defeitos que só dado real mostraria.** Estão no commit
-`d361dda` e no topo de `grafo.py`, com os números. O resumo:
+`1f2f368` e no topo de `grafo.py`, com os números. O resumo:
 
 1. **O território inflava a similaridade.** Eu tinha aplicado o TF-IDF só na
    hora de *pontuar* e não na hora de *comparar* — e comparar vem antes.

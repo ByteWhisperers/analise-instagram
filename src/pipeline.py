@@ -29,12 +29,13 @@ from pathlib import Path
 import coletor as mod_coletor
 import console
 import config
+import lexico
 import mapeador
 import db
 import desempenho
 from downloader import YtDlpDownloader
 from repos import (consultas, contents, costs, jobs, media, metrics, niches,
-                   profiles)
+                   observacoes, profiles)
 from storage import LocalStorage
 
 TIPO_DOWNLOAD = "video_download"
@@ -157,6 +158,10 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
 
     contagens, perfis, posts = {}, {}, []
     visitadas, expandidos = set(), set()
+    # Tudo que as legendas disseram, e nao so as hashtags. Vai para
+    # `term_observations` no fim, mesmo numa rodada seca: dinheiro gasto vira
+    # dado ainda que o dossie seja descartado.
+    colhido = []
     # O teto conta pela ESTIMATIVA e nao pelo custo real: o real so chega
     # depois da rodada, e depois e tarde para nao gastar. Numa sonda de
     # 30/08/2026 a Apify devolveu US$ 0.0000 numa rodada com 3 itens — teto que
@@ -224,9 +229,14 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
                 visitadas.add(tag)
                 estimado += por_rodada
                 real += coleta.custo_usd or 0
+                # Uma varredura so dos itens crus: dela saem as observacoes
+                # inteiras (palavra, bigrama, emoji, mencao) e, filtrando por
+                # kind, a mesma contagem de hashtag de sempre.
+                vistas = mod_coletor.observacoes_dos_itens(coleta.brutos,
+                                                           fonte="#" + tag)
+                colhido.extend(vistas)
                 contagens = mapeador.fundir_contagens(
-                    contagens,
-                    mod_coletor.tags_dos_itens(coleta.brutos, fonte="#" + tag))
+                    contagens, lexico.contar(vistas, kinds=("hashtag",)))
                 for perfil in coleta.perfis:
                     perfis.setdefault(perfil["usuario"], {}).update(perfil)
                 posts.extend(coleta.posts)
@@ -255,10 +265,11 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
                 expandidos.update(alvos_perfis)
                 estimado += por_rodada
                 real += coleta.custo_usd or 0
+                vistas = mod_coletor.observacoes_dos_itens(coleta.brutos,
+                                                           fonte="relacionados")
+                colhido.extend(vistas)
                 contagens = mapeador.fundir_contagens(
-                    contagens,
-                    mod_coletor.tags_dos_itens(coleta.brutos,
-                                               fonte="relacionados"))
+                    contagens, lexico.contar(vistas, kinds=("hashtag",)))
                 for perfil in coleta.perfis:
                     perfis.setdefault(perfil["usuario"], {}).update(perfil)
                 # PARTE C: os `latestPosts` do item de perfil vem datados, e
@@ -312,9 +323,19 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
             for perfil in medidos.perfis:
                 perfis.setdefault(perfil["usuario"], {}).update(perfil)
             posts.extend(medidos.posts)   # PARTE C, o outro lugar
+            # A medicao tambem traz legenda: o `details` vem com `latestPosts`
+            # aninhados, os mesmos que alimentam o ritmo. Ja foram pagos.
+            colhido.extend(mod_coletor.observacoes_dos_itens(
+                medidos.brutos, fonte="medicao"))
             com_numero = sum(1 for p in perfis.values()
                              if p.get("seguidores") is not None)
             _linha("  %d perfil(is) com contagem de seguidores" % com_numero)
+
+        # A rodada e seca para NICHO, nunca para OBSERVACAO. Sem `--aplicar`
+        # nao entra termo aprovado nem perfil, mas o que as legendas disseram
+        # fica: e o corpus de fundo da exclusividade e a serie temporal do
+        # vocabulario, e nenhum dos dois se reconstroi sem pagar de novo.
+        gravadas = observacoes.gravar(cx, colhido, job_id=coleta_id)
 
         jobs.fechar_coleta(cx, coleta_id, encontrados=len(contagens),
                            criados=0, atualizados=0)
@@ -332,6 +353,12 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
     _linha()
     _linha("Parou por: %s. %d termos, %d perfis."
            % (parou_por, len(contagens), len(perfis)))
+    _linha("Lexico: %d observacoes gravadas (%d hashtags, %d palavras, "
+           "%d bigramas, %d emojis, %d mencoes)."
+           % (gravadas,
+              *(sum(1 for o in colhido if o["kind"] == k)
+                for k in ("hashtag", "palavra", "bigrama", "emoji",
+                          "mencao"))))
     _linha("Custo estimado US$ %.4f (teto US$ %.2f) | real US$ %.4f"
            % (estimado, teto_usd, real))
     _linha()

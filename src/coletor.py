@@ -745,7 +745,13 @@ class ApifyInstagramCollector(InstagramCollector):
             "resultsLimit": 1,
         }
         itens, run, duracao = self._rodar(entrada, len(usuarios) * 2)
-        return self._montar(itens, run, duracao)
+        coleta = self._montar(itens, run, duracao)
+        # Os itens crus vem junto, como em `mapear_tag` e `relacionados_de`.
+        # O `details` traz `latestPosts` aninhados e datados — sao os mesmos
+        # posts que ja alimentam o ritmo, e a legenda deles ja foi paga. Sem
+        # esta linha, o lexico da medicao seria jogado fora.
+        coleta.brutos = itens
+        return coleta
 
     def coletar_conteudo(self, usuarios, max_posts=10, janela_dias=None,
                          tipo="posts"):

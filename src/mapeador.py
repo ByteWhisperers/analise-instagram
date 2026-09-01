@@ -329,12 +329,17 @@ MINIMO_DE_PERFIS_PARA_AGRUPAR = 2
 # Perfil sobre o qual quase nada foi observado casa com qualquer um por acaso:
 # o Jaccard fica alto porque o denominador e minusculo, nao porque as duas
 # contas falem parecido.
-MINIMO_DE_TERMOS_POR_PERFIL = 4
+#
+# `[MEDIDO 31/08/2026]` TRES e nao quatro: com 4, o tema "grau de moto" perdia
+# os perfis de legenda curta — e naquele nicho a legenda curta e a regra, nao a
+# excecao. O corte tem de tirar quem nao diz nada, nao quem fala pouco.
+MINIMO_DE_TERMOS_POR_PERFIL = 3
 
 
-def secao_de_tribos(colhido, limiar=grafo.LIMIAR_DE_ARESTA,
+def secao_de_tribos(colhido, vizinhos_por_no=grafo.VIZINHOS_POR_NO,
                     minimo_de_perfis=MINIMO_DE_PERFIS_PARA_AGRUPAR,
-                    minimo_de_termos=MINIMO_DE_TERMOS_POR_PERFIL):
+                    minimo_de_termos=MINIMO_DE_TERMOS_POR_PERFIL,
+                    minimo_por_tribo=grafo.MINIMO_POR_TRIBO):
     """Observacoes -> as tribos, com assinatura e com a nota de cada perfil.
 
     O caminho inteiro da Fase 2 e da Fase 3 num lugar so, porque as duas nao
@@ -355,7 +360,9 @@ def secao_de_tribos(colhido, limiar=grafo.LIMIAR_DE_ARESTA,
         return None
 
     tribo_do_perfil = grafo.tribos_de_perfis(
-        perfis_por_termo, limiar=limiar, minimo_de_termos=minimo_de_termos)
+        perfis_por_termo, vizinhos_por_no=vizinhos_por_no,
+        minimo_de_termos=minimo_de_termos,
+        minimo_por_tribo=minimo_por_tribo)
     grupos = grafo.agrupar(tribo_do_perfil)
     if len(grupos) < 2:
         return None

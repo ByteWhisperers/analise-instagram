@@ -235,9 +235,81 @@ magros = {"m1": ["moto", "grau"], "m2": ["moto", "grau"],
 por_termo_m = grafo.inverter({p: set(t) for p, t in magros.items()})
 conferir_que("com o corte, o perfil magro nao entra no agrupamento",
              "m1" not in grafo.tribos_de_perfis(por_termo_m,
-                                                minimo_de_termos=3))
+                                                minimo_de_termos=3,
+                                                minimo_por_tribo=1))
 conferir_que("sem o corte, ele entra",
-             "m1" in grafo.tribos_de_perfis(por_termo_m, minimo_de_termos=1))
+             "m1" in grafo.tribos_de_perfis(por_termo_m, minimo_de_termos=1,
+                                            minimo_por_tribo=1))
+
+
+print("\n=== idf: o territorio nao pode inflar a similaridade ===")
+
+# `[MEDIDO 31/08/2026]` Numa rodada real de "grau de moto", `#grau`, `#moto` e
+# `#graudemoto` estavam em quase todos os 68 perfis. Dois perfis que dividiam
+# SO o territorio ja ficavam com Jaccard alto, e o agrupamento colapsou num
+# bloco de 55 perfis.
+TERRITORIO = {
+    "p1": {"moto", "grau", "graudemoto", "torque"},
+    "p2": {"moto", "grau", "graudemoto", "setup"},
+}
+pesos = grafo.idf({"p1": TERRITORIO["p1"], "p2": TERRITORIO["p2"],
+                   "p3": {"moto", "grau", "graudemoto", "mandrake"}})
+cru = grafo.jaccard(TERRITORIO["p1"], TERRITORIO["p2"])
+ponderado = grafo.jaccard(TERRITORIO["p1"], TERRITORIO["p2"], pesos)
+conferir_que("sem peso, o territorio compartilhado ja da similaridade alta",
+             cru >= 0.5)
+conferir_que("com idf, ela despenca — o que divide e so territorio",
+             ponderado < cru / 2)
+
+conferir("termo em TODOS os conjuntos vale zero",
+         grafo.idf({"a": {"x"}, "b": {"x"}})["x"], 0.0)
+conferir_que("e termo raro vale mais que termo comum",
+             grafo.idf({"a": {"x", "y"}, "b": {"x"}, "c": {"x"}})["y"]
+             > grafo.idf({"a": {"x", "y"}, "b": {"x"}, "c": {"x"}})["x"])
+conferir("sem conjuntos nao estoura", grafo.idf({}), {})
+
+
+print("\n=== vizinhos mais proximos: nao depende da densidade global ===")
+
+# Limiar absoluto e percentil foram medidos e falharam — o comentario no topo
+# de `grafo.py` guarda os numeros. Vizinho mais proximo funciona igual num
+# grafo denso e num ralo, porque cada no so olha para os seus.
+todas = {("a", "b"): 0.9, ("a", "c"): 0.5, ("a", "d"): 0.1,
+         ("b", "c"): 0.4, ("b", "d"): 0.2, ("c", "d"): 0.3}
+so_um = grafo.mais_proximos(todas, quantos=1)
+conferir_que("cada no guarda a sua mais forte", ("a", "b") in so_um)
+conferir_que("o corte tira arestas", len(so_um) < len(todas))
+# A aresta fraca para os DOIS lados e a que cai: `a-d` e a pior de `a`, e `d`
+# prefere `c`.
+conferir_que("a aresta fraca dos dois lados cai", ("a", "d") not in so_um)
+
+# Uniao e nao interseccao: o perfil pequeno costuma ser vizinho do grande sem
+# reciprocidade, e exigir reciprocidade deixaria a periferia inteira fora do
+# mapa. Aqui `c` nao e a preferida de `a`, mas `a` e a preferida de `c`.
+conferir_que("a aresta que so um lado escolheu SOBREVIVE — a uniao salva a "
+             "periferia", ("a", "c") in so_um)
+conferir("sem arestas nao estoura", grafo.mais_proximos({}), {})
+
+
+print("\n=== tribo de um perfil nao e tribo ===")
+
+# `[MEDIDO 31/08/2026]` Em "tragédias" o agrupamento devolveu 11 grupos, CINCO
+# deles com um perfil so. Nao poluiam so a leitura: contavam no total e
+# estragavam a normalizacao da generalidade, que divide por log(total).
+COM_SOLITARIO = dict(MOTO)
+COM_SOLITARIO["sozinho"] = ["assuntocompletamenteoutro", "xyz", "abc", "def"]
+por_termo_s = grafo.inverter({p: set(t) for p, t in COM_SOLITARIO.items()})
+
+com_corte = grafo.tribos_de_perfis(por_termo_s, minimo_por_tribo=3)
+conferir_que("o perfil que nao agrupou sai do mapa",
+             "sozinho" not in com_corte)
+conferir_que("e os que agruparam ficam", "a1" in com_corte)
+
+sem_corte = grafo.tribos_de_perfis(por_termo_s, minimo_por_tribo=1)
+conferir_que("sem o corte, ele vira uma 'tribo' de um",
+             "sozinho" in sem_corte)
+conferir_que("o que inflaria o total de tribos",
+             len(grafo.agrupar(sem_corte)) > len(grafo.agrupar(com_corte)))
 
 
 print("\n" + "=" * 52)

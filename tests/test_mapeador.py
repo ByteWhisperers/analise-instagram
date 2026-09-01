@@ -340,6 +340,129 @@ conferir("com alvo 'qualquer' nada e descartado",
 conferir("e as tres ficam na lista principal",
          len(dossie_qualquer["tags"]), 3)
 
+print("\nT16: as tribos e a proxima pergunta")
+
+import lexico
+
+# Legendas de verdade, porque e da legenda que as tribos saem — a hashtag
+# sozinha nunca separaria estas tres.
+POSTS_MOTO = [
+    ("a1", "Hoje foi daquele jeito, so gratidao. Fe sempre, familia reunida",
+     ["moto", "grau", "familia"]),
+    ("a2", "Fe em primeiro lugar, familia junto. Hoje foi bom demais",
+     ["moto", "grau", "familia"]),
+    ("a3", "Familia e fe, o resto vem. Mandou bem demais hoje",
+     ["moto", "familia"]),
+    ("b1", "Setup novo fechado, acerto de suspensao e torque no ponto",
+     ["moto", "setup", "preparacao"]),
+    ("b2", "Dyno marcou bem, acerto fino de torque. Setup redondo",
+     ["moto", "setup", "preparacao"]),
+    ("b3", "Torque certo, setup ajustado, acerto de carburacao",
+     ["moto", "setup", "preparacao"]),
+    ("c1", "Mandrake da quebrada, os menor colou no role de grau",
+     ["moto", "grau", "quebrada"]),
+    ("c2", "So os menor da quebrada, mandrake demais nesse grau",
+     ["moto", "grau", "quebrada"]),
+    ("c3", "Quebrada inteira no role, mandrake e os menor",
+     ["moto", "grau", "quebrada"]),
+]
+COLHIDO = []
+for _perfil, _legenda, _tags in POSTS_MOTO:
+    COLHIDO += lexico.observacoes(texto=_legenda, hashtags=_tags,
+                                  perfil=_perfil, post=_perfil + "_p",
+                                  voto="pt")
+
+secao = mapeador.secao_de_tribos(COLHIDO)
+conferir_que("a secao de tribos nasce do lexico, nao das hashtags",
+             secao is not None)
+conferir("acha as tres tribos", secao["quantas"], 3)
+conferir("uma assinatura por tribo", len(secao["assinaturas"]), 3)
+conferir_que("cada perfil recebe uma distribuicao, nunca um rotulo",
+             all(isinstance(d, dict) for d in secao["perfis"].values()))
+conferir_que("e `outros` concorre em todas",
+             all("outros" in d for d in secao["perfis"].values()))
+
+# A matriz e o centro do desenho: a MESMA palavra com nota em cada tribo.
+por_termo = {l["termo"]: l for l in secao["matriz"]}
+conferir_que("a matriz da uma nota por tribo ao mesmo termo",
+             len(por_termo["moto"]["por_tribo"]) == 3)
+conferir_que("`moto` e territorio: generalidade alta",
+             por_termo["moto"]["generalidade"] > 0.9)
+conferir_que("`mandrake` e marcador: generalidade zero",
+             por_termo["mandrake"]["generalidade"] == 0.0)
+conferir_que("e `torque` vale mais numa tribo que na outra",
+             max(v for v in por_termo["torque"]["por_tribo"].values()
+                 if v is not None)
+             > min(v for v in por_termo["torque"]["por_tribo"].values()
+                   if v is not None))
+
+# Amostra que nao sustenta agrupamento devolve None. Tribo inventada e pior
+# que dossie sem tribo.
+conferir("sem observacoes nao ha tribo", mapeador.secao_de_tribos([]), None)
+conferir("um perfil so nao vira tribo",
+         mapeador.secao_de_tribos(
+             lexico.observacoes(texto="moto e grau", perfil="unico",
+                                post="p")), None)
+
+
+print("\nT16: a escolha de alvos deixa de ser gulosa")
+
+CONTAGENS_MOTO = lexico.contar(COLHIDO, kinds=("hashtag",))
+
+# Sem tribos conhecidas, cai no comportamento antigo: perfis distintos. Sem
+# cluster nao ha incerteza sobre cluster para reduzir.
+sem_tribos = mapeador.proximos_alvos(CONTAGENS_MOTO, 3)
+conferir("sem tribos, o mais forte vem primeiro — o de sempre",
+         sem_tribos[0], "moto")
+
+com_tribos = mapeador.proximos_alvos(CONTAGENS_MOTO, 3, tribos=secao)
+conferir_que("com tribos, o territorio NAO e mais a primeira escolha",
+             com_tribos[0] != "moto")
+conferir_que("quem entra e marcador de tribo",
+             com_tribos[0] in ("quebrada", "preparacao", "familia", "setup"))
+
+conferir("a rodada respeita o tamanho pedido", len(com_tribos), 3)
+conferir("pedir zero devolve vazio",
+         mapeador.proximos_alvos(CONTAGENS_MOTO, 0, tribos=secao), [])
+conferir("tag ja visitada nao volta",
+         "moto" in mapeador.proximos_alvos(
+             CONTAGENS_MOTO, 5, visitadas={"moto"}, tribos=secao), False)
+conferir("sem contagens nao estoura", mapeador.proximos_alvos({}, 3), [])
+
+# Com uma vaga so, ela vai para aprofundar: a fatia de exploracao nunca come
+# a rodada inteira.
+uma_vaga = mapeador.proximos_alvos(CONTAGENS_MOTO, 1, tribos=secao)
+conferir("com uma vaga so, nao sobra nada para exploracao", len(uma_vaga), 1)
+conferir_que("e ela vai para o marcador, nao para o territorio",
+             uma_vaga[0] != "moto")
+
+# O filtro de idioma continua agindo na escolha, que e onde ele economiza.
+COM_ES = dict(CONTAGENS_MOTO)
+COM_ES["seguridad"] = {"posts": 9, "perfis": ["z1", "z2", "z3"],
+                       "idiomas": {"pt": 0, "es": 9, "?": 0},
+                       "fonte": "#x", "kind": "hashtag"}
+conferir("tag provada espanhola nao vira alvo",
+         "seguridad" in mapeador.proximos_alvos(COM_ES, 8, tribos=secao),
+         False)
+conferir_que("mas entra com alvo 'qualquer'",
+             "seguridad" in mapeador.proximos_alvos(
+                 COM_ES, 8, tribos=secao, idioma_alvo="qualquer"))
+
+conferir("ganho de termo sem exclusividade e zero",
+         mapeador.ganho_do_termo({"exclusividade_maxima": None,
+                                  "perfis": 9}), 0.0)
+conferir_que("e o marcador rende mais ganho que o territorio",
+             mapeador.ganho_do_termo(por_termo["mandrake"])
+             > mapeador.ganho_do_termo(por_termo["moto"]))
+
+dossie_com_tribos = mapeador.montar_dossie("moto", CONTAGENS_MOTO, [], [],
+                                           tribos=secao)
+conferir_que("o dossie carrega as tribos",
+             dossie_com_tribos["tribos"]["quantas"] == 3)
+conferir("e sem tribos a chave fica, valendo None",
+         mapeador.montar_dossie("x", {}, [])["tribos"], None)
+
+
 shutil.rmtree(TEMPORARIA, ignore_errors=True)
 
 print("\n" + "=" * 52)

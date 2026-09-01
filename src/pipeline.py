@@ -162,6 +162,10 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
     # `term_observations` no fim, mesmo numa rodada seca: dinheiro gasto vira
     # dado ainda que o dossie seja descartado.
     colhido = []
+    # As tribos conhecidas ate a rodada anterior. `None` nas primeiras, quando
+    # a amostra ainda nao sustenta agrupamento — e ai a escolha de alvos cai no
+    # ranking antigo, porque sem cluster nao ha incerteza sobre cluster.
+    tribos_ate_agora = None
     # O teto conta pela ESTIMATIVA e nao pelo custo real: o real so chega
     # depois da rodada, e depois e tarde para nao gastar. Numa sonda de
     # 30/08/2026 a Apify devolveu US$ 0.0000 numa rodada com 3 itens — teto que
@@ -197,16 +201,18 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
                 # cluster errado custa a rodada inteira.
                 alvos = list(sementes)
             else:
-                # PARTE B do filtro, e e aqui que ele economiza dinheiro: tag
-                # provada de outro idioma nao vira alvo da rodada seguinte.
-                # Descartar so no fim seria pagar para aprofundar no cluster
+                # A pergunta deixou de ser "quais as tags mais fortes?" e
+                # passou a ser "qual observacao mais reduz a incerteza sobre a
+                # identidade dos clusters?". A tag mais forte e quase sempre a
+                # do territorio, e territorio e onde as tribos se parecem.
+                #
+                # PARTE B do filtro de idioma continua dentro: tag provada de
+                # outro idioma nao vira alvo, e e aqui que ela economiza —
+                # descartar so no fim seria pagar para aprofundar num cluster
                 # que seria rejeitado depois.
-                alvos = [linha["termo"] for linha
-                         in mapeador.ranquear_termos(contagens)
-                         if linha["termo"] not in visitadas
-                         and not mapeador.e_de_outro_idioma(
-                             contagens.get(linha["termo"]), idioma_alvo)
-                         ][:mapa["tags_por_rodada"]]
+                alvos = mapeador.proximos_alvos(
+                    contagens, mapa["tags_por_rodada"], visitadas=visitadas,
+                    tribos=tribos_ate_agora, idioma_alvo=idioma_alvo)
 
             if not alvos and rodada > 1:
                 parou_por = "acabaram as tags novas"
@@ -293,6 +299,15 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
 
             if parou_por == "teto":
                 break
+
+            # Reagrupa com o que a rodada acabou de trazer. E o que torna o
+            # laco progressivamente mais informado: a rodada seguinte escolhe
+            # sabendo quais tribos existem, e nao so quais tags sao grandes.
+            tribos_ate_agora = mapeador.secao_de_tribos(colhido)
+            if tribos_ate_agora:
+                _linha("  %d tribo(s) visiveis ate aqui"
+                       % tribos_ate_agora["quantas"])
+
             if mapeador.saturou(antes, set(contagens), saturacao):
                 parou_por = "saturacao"
                 break
@@ -346,7 +361,8 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
 
     # As tribos saem do lexico inteiro, e nao so das hashtags: e a legenda que
     # separa `#tragédias` de literatura de `#tragédias` de desastre aereo.
-    tribos = mapeador.secao_de_tribos(colhido)
+    # Refeito no fim porque a medicao e a ultima rodada trouxeram legenda nova.
+    tribos = mapeador.secao_de_tribos(colhido) or tribos_ate_agora
 
     dossie = mapeador.montar_dossie(tema, contagens, list(perfis.values()),
                                     posts, custo_usd=real,

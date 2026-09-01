@@ -370,6 +370,25 @@ def secao_de_tribos(colhido, limiar=grafo.LIMIAR_DE_ARESTA,
         for termo, perfis in perfis_por_termo.items()
     }
 
+    # A matriz termo x tribo: a MESMA palavra com uma nota em cada tribo. E o
+    # centro do desenho, e o motivo de nao existir lista de dentro/fora — em
+    # `moto`, `torque` vale >5 na oficina e <1 na quebrada, e as duas coisas
+    # sao verdade ao mesmo tempo.
+    matriz = []
+    for termo, perfis in perfis_por_termo.items():
+        por_tribo = {t: assinatura.exclusividade(modelo, termo, t)
+                     for t in grupos}
+        notas = [v for v in por_tribo.values() if v is not None]
+        matriz.append({
+            "termo": termo,
+            "kind": kinds.get(termo),
+            "perfis": len(perfis),
+            "generalidade": generalidades.get(termo),
+            "exclusividade_maxima": max(notas) if notas else None,
+            "por_tribo": por_tribo,
+        })
+    matriz.sort(key=lambda l: (-(l["exclusividade_maxima"] or 0), l["termo"]))
+
     termos_do_perfil = grafo.inverter(perfis_por_termo)
     return {
         "quantas": len(grupos),
@@ -377,13 +396,124 @@ def secao_de_tribos(colhido, limiar=grafo.LIMIAR_DE_ARESTA,
             "`semantic_core` e o territorio onde a tribo mora; "
             "`identity_markers` e o que a distingue das vizinhas. "
             "`generalidade` vai de 0 (marcador) a 1 (territorio), e "
-            "`exclusividade` acima de 1 e desproporcionalmente desta tribo."),
+            "`exclusividade` acima de 1 e desproporcionalmente desta tribo. "
+            "Em `matriz`, o mesmo termo tem uma nota POR tribo — de proposito: "
+            "uma palavra pode ser marca de uma e territorio de outra."),
         "assinaturas": assinatura.montar_todas(modelo, generalidades),
+        "matriz": matriz,
         "perfis": {
             perfil: assinatura.classificar(modelo, termos_do_perfil.get(perfil))
             for perfil in sorted(tribo_do_perfil)
         },
     }
+
+
+# ------------------------------------------------------- a proxima pergunta
+
+
+# Quanto da rodada vai para EXPLORAR a fronteira em vez de aprofundar o que ja
+# se sabe. Sem essa fatia o laco vira exploracao pura da tribo mais forte, que
+# e a versao nova do mesmo defeito guloso que a T15 corrigiu no eixo das
+# sementes: aprofundar no cluster que abriu primeiro.
+FRACAO_DE_EXPLORACAO = 0.34
+
+
+def ganho_do_termo(linha):
+    """Quanto abrir esta tag promete ensinar sobre a identidade das tribos.
+
+        ganho = exclusividade_maxima x log(1 + perfis)
+
+    **A exclusividade e quem manda, e e a troca central da Fase 4.** O ranking
+    por perfis distintos elege o TERRITORIO: `#moto` aparece em todo perfil, e
+    abri-la devolve a multidao misturada que ja se tem. A exclusividade elege o
+    MARCADOR: `#mandrake` mora numa tribo so, e abri-la traz mais gente dela.
+
+    O `log(1 + perfis)` exige algum lastro sem deixar o volume decidir: satura
+    depressa, entao a tag do territorio nao vence por tamanho, e a tag vista uma
+    vez so nao vence por acaso.
+
+    **Os pesos sao uma primeira aposta, nao uma medicao.** Nao ha rodada real
+    comparando esta ordem com a gulosa ainda. Quando houver, e este numero que
+    se mexe primeiro.
+    """
+    import math
+
+    exclusividade = linha.get("exclusividade_maxima")
+    if exclusividade is None:
+        return 0.0
+    return exclusividade * math.log(1 + (linha.get("perfis") or 0))
+
+
+def proximos_alvos(contagens, quantos, visitadas=(), tribos=None,
+                   idioma_alvo="pt", fracao_de_exploracao=FRACAO_DE_EXPLORACAO):
+    """As tags da proxima rodada. `[MEDIDO 30/08/2026]` substitui a escolha gulosa.
+
+    A pergunta deixa de ser "quais as tags mais fortes?" e passa a ser **"qual
+    observacao mais reduz minha incerteza sobre a identidade dos clusters?"**.
+    Sao respostas diferentes: a tag mais forte e quase sempre a do territorio, e
+    o territorio e onde todas as tribos se parecem.
+
+    A rodada e dividida em duas intencoes explicitas:
+
+    - **aprofundar** — maior `ganho_do_termo`: os marcadores, que trazem mais
+      gente da tribo que os exibe;
+    - **explorar** — maior `generalidade`: os termos que ficam ENTRE as tribos.
+      E na fronteira que se descobre se sao mesmo duas comunidades ou uma so
+      mal separada, e e a fatia que impede o laco de so aprofundar.
+
+    Sem tribos ainda (as primeiras rodadas, quando a amostra nao sustenta
+    agrupamento) cai no comportamento antigo — perfis distintos. Isso e
+    proposital: sem cluster nao ha incerteza sobre cluster para reduzir.
+    """
+    visitadas = set(visitadas or ())
+    elegiveis = [
+        linha["termo"] for linha in ranquear_termos(contagens)
+        if linha["termo"] not in visitadas
+        and not e_de_outro_idioma(contagens.get(linha["termo"]), idioma_alvo)
+    ]
+    if quantos <= 0 or not elegiveis:
+        return []
+    if not tribos or not tribos.get("matriz"):
+        return elegiveis[:quantos]
+
+    permitidos = set(elegiveis)
+    candidatos = [linha for linha in tribos["matriz"]
+                  if linha["termo"] in permitidos
+                  and linha.get("kind") == "hashtag"]
+    if not candidatos:
+        return elegiveis[:quantos]
+
+    # A fatia de exploracao arredonda para BAIXO, e nunca come a rodada
+    # inteira: com `quantos=1` a unica vaga vai para aprofundar, que e a aposta
+    # mais segura quando so se pode fazer uma pergunta.
+    de_exploracao = min(int(quantos * fracao_de_exploracao), quantos - 1)
+    de_aprofundar = quantos - de_exploracao
+
+    escolhidos, ja = [], set()
+    for linha in sorted(candidatos, key=lambda l: (-ganho_do_termo(l),
+                                                   l["termo"])):
+        if len(escolhidos) >= de_aprofundar:
+            break
+        escolhidos.append(linha["termo"])
+        ja.add(linha["termo"])
+
+    for linha in sorted(candidatos, key=lambda l: (-(l["generalidade"] or 0),
+                                                   l["termo"])):
+        if len(escolhidos) >= quantos:
+            break
+        if linha["termo"] not in ja:
+            escolhidos.append(linha["termo"])
+            ja.add(linha["termo"])
+
+    # A cauda que o agrupamento nao alcanca (termo de um perfil so) nao pode
+    # deixar a rodada vazia: se sobrou vaga, o ranking antigo a preenche.
+    for termo in elegiveis:
+        if len(escolhidos) >= quantos:
+            break
+        if termo not in ja:
+            escolhidos.append(termo)
+            ja.add(termo)
+    return escolhidos
 
 
 def montar_dossie(tema, contagens, perfis, posts=None, custo_usd=0.0,

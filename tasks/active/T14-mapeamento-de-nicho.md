@@ -43,7 +43,7 @@ resultado do mapeamento, não pergunta antes dele.
 ## Parte 0 — A sonda bloqueante  ✅ RESPONDIDA
 
 O eixo de expansão por perfil relacionado sustentava metade do laço, e a única
-evidência era `relatedProfiles: []` — de `donclipss`, conta com 12 seguidores e
+evidência era `relatedProfiles: []` — de uma conta com 12 seguidores e
 0 posts. Rodada contra `receitasdepai` (3,1M) em 30/08/2026, custo US$ 0,0000:
 
 - **`relatedProfiles` devolveu 15 perfis.** O eixo 2 entra como desenhado. A

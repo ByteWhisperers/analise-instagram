@@ -36,6 +36,7 @@ import time
 from datetime import datetime, timezone
 
 import idioma
+import lexico
 
 ACTOR_PADRAO = "apify/instagram-scraper"
 
@@ -367,8 +368,54 @@ def na_banda(perfil, minimo=None, maximo=None, somente_publicos=True):
     return True
 
 
+def observacoes_dos_itens(itens, fonte=None):
+    """Itens crus -> a lista de observacoes que eles produziram.
+
+    **Este e o unico lugar que sabe onde os campos moram dentro do item do
+    Actor.** O `lexico.py` recebe texto, hashtags e mencoes ja extraidos e nao
+    conhece schema nenhum — mesma divisao que existe entre `idioma.py`, que le
+    texto, e quem vai buscar o texto.
+
+    `[MEDIDO 30/08/2026]` Ate a T15 daqui saia so o campo `hashtags`, e a
+    legenda era lida uma vez para votar idioma e jogada fora. Giria, emoji,
+    abreviacao, bigrama e mencao — tudo que distingue uma tribo da outra —
+    estavam naquele texto descartado. A legenda ja foi paga: le-la de novo
+    custa CPU, nao centavo.
+    """
+    achadas = []
+
+    def _colher(bruto, dono):
+        texto = _primeiro(bruto, "caption", "text", padrao="")
+        # Uma deteccao por post, reaproveitada por todos os termos dele: a
+        # legenda e a mesma, e detectar dez vezes o mesmo texto seria so gastar
+        # CPU para chegar na mesma resposta.
+        voto = idioma.detectar(texto)
+        achadas.extend(lexico.observacoes(
+            texto=texto,
+            hashtags=bruto.get("hashtags"),
+            mencoes=bruto.get("mentions"),
+            perfil=dono,
+            post=_primeiro(bruto, "id", "shortCode", "shortcode"),
+            fonte=fonte,
+            voto="?" if voto is None else voto,
+        ))
+
+    for bruto in itens or []:
+        if not isinstance(bruto, dict) or bruto.get("error"):
+            continue
+        dono = _primeiro(bruto, "ownerUsername", "username")
+        _colher(bruto, dono)
+        # Item de perfil (`resultsType: details`) traz os posts recentes
+        # aninhados, e as hashtags deles junto. Sem desaninhar aqui, mapear por
+        # perfil relacionado nao renderia vocabulario nenhum.
+        for aninhado in _aninhados(bruto):
+            _colher(aninhado, _primeiro(aninhado, "ownerUsername") or dono)
+
+    return achadas
+
+
 def tags_dos_itens(itens, fonte=None):
-    """Itens crus -> o vocabulario que eles carregam, com a evidencia.
+    """Itens crus -> o vocabulario de HASHTAG que eles carregam.
 
     Devolve `{tag: {"posts": n, "perfis": [usuarios], "idiomas": {...},
     "fonte": ...}}`.
@@ -383,48 +430,12 @@ def tags_dos_itens(itens, fonte=None):
     patrocinio aparece MUITO, mas num perfil so; tag do nicho aparece em varios
     perfis. Contar posts elegeria a propaganda.
 
-    Nao custa nada: o campo `hashtags` ja vem dentro do item que foi pago.
+    Continua existindo com o mesmo nome e a mesma forma depois da T16 porque
+    meia duzia de chamadores so querem hashtag. Quem quer a legenda inteira
+    chama `observacoes_dos_itens()` e filtra por `kind`.
     """
-    achado = {}
-
-    def _somar(bruto, dono):
-        tags = bruto.get("hashtags") or []
-        if not tags:
-            return
-
-        # Uma deteccao por post, reaproveitada por todas as tags dele: a
-        # legenda e a mesma, e detectar dez vezes o mesmo texto seria so gastar
-        # CPU para chegar na mesma resposta.
-        voto = idioma.detectar(_primeiro(bruto, "caption", "text", padrao=""))
-        voto = "?" if voto is None else voto
-
-        for tag in tags:
-            if not isinstance(tag, str) or not tag.strip():
-                continue
-            chave = tag_do_termo(tag.lstrip("#"))
-            if not chave:
-                continue
-            linha = achado.setdefault(chave, {"posts": 0, "perfis": [],
-                                              "idiomas": {"pt": 0, "es": 0,
-                                                          "?": 0},
-                                              "fonte": fonte})
-            linha["posts"] += 1
-            linha["idiomas"][voto] += 1
-            if dono and dono not in linha["perfis"]:
-                linha["perfis"].append(dono)
-
-    for bruto in itens or []:
-        if not isinstance(bruto, dict) or bruto.get("error"):
-            continue
-        dono = _primeiro(bruto, "ownerUsername", "username")
-        _somar(bruto, dono)
-        # Item de perfil (`resultsType: details`) traz os posts recentes
-        # aninhados, e as hashtags deles junto. Sem desaninhar aqui, mapear por
-        # perfil relacionado nao renderia vocabulario nenhum.
-        for aninhado in _aninhados(bruto):
-            _somar(aninhado, _primeiro(aninhado, "ownerUsername") or dono)
-
-    return achado
+    return lexico.contar(observacoes_dos_itens(itens, fonte=fonte),
+                         kinds=("hashtag",))
 
 
 def donos_dos_posts(itens):

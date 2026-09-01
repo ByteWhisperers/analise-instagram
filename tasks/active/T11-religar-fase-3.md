@@ -57,6 +57,37 @@ arquivos, e então apagar o SQLite de vez.
 | `edicoes` | `media_assets` com `asset_type='edit'` |
 | `downloads` | `processing_jobs` |
 
+## O `post.json` é entrada, não cópia — descoberto em 01/09/2026
+
+**`transcrever.py` e `analisar.py` não consultam o PostgreSQL.** Eles varrem
+`dados/perfis/*/` procurando `perfil.json` e `post.json`, leem dali, e escrevem
+em `dados/analises/*.json` + SQLite.
+
+Medido em 01/09/2026:
+
+```
+disco:      16 post.json    15 mp4    0 transcricao.json
+PostgreSQL: contents 16     media_assets 15
+            transcripts 0   content_analyses 0
+SQLite:     dados/analise.db NÃO EXISTE
+```
+
+Os 16 batem porque `coletar` grava banco e disco em linhas adjacentes, sem
+desvio entre elas (`pipeline.py:824` e `:832`). O que não bate é a Fase 3: ela
+nunca rodou na era PostgreSQL.
+
+**Duas consequências que precisam entrar no trabalho:**
+
+1. **O comentário em `pipeline.py:830` está errado e é perigoso.** Ele diz que
+   o `post.json` "não é redundância: é o que permite conferir a coleta a olho,
+   sem abrir o banco" — como se fosse conveniência. Ele é **carga**: sem ele a
+   Fase 3 não tem entrada. Corrigir o comentário faz parte desta task.
+2. **O `limpar` não protege o `post.json`.** Conferir isso antes de rodar
+   qualquer faxina, ou a Fase 3 perde a entrada de posts já pagos.
+
+Portar a Fase 3 resolve os dois de uma vez: a entrada passa a ser o banco, e o
+`post.json` volta a ser o que o comentário diz que ele é.
+
 ## Cuidado que vale registrar
 
 A busca full-text mudou de motor. O FTS5 casava substring; o `tsvector`

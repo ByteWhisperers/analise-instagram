@@ -27,7 +27,7 @@ o escopo cresceu.
 |---|---|---|
 | Preparo | `preparar.py verificar` | o que falta na máquina, e o conserto |
 | **Mapeamento** | `pipeline.py mapear "<tema>"` | vocabulário, perfis-semente e a banda medida. Seco: só grava com `--aplicar` |
-| Esquema | `migrar.py aplicar` | as 21 tabelas do PostgreSQL |
+| Esquema | `migrar.py aplicar` | as 22 tabelas do PostgreSQL |
 | Descoberta | `pipeline.py descobrir "<nicho>"` | perfis em `profiles`, filtrados pela banda |
 | Coleta | `pipeline.py coletar --nicho X` | conteúdo + fila em `processing_jobs` |
 | Download | `pipeline.py baixar` | `dados/perfis/<perfil>/<id>/midia.mp4` |
@@ -45,12 +45,15 @@ Módulos de apoio, sem linha de comando própria:
 | Arquivo | Responsabilidade |
 |---|---|
 | `src/config.py` | caminhos do projeto e leitura validada do `config.local.json` |
-| `src/mapeador.py` | ranquear, saturar, medir e montar o dossiê. Só função pura |
+| `src/mapeador.py` | ranquear, saturar, medir, agrupar tribos e montar o dossiê. Só função pura |
+| `src/lexico.py` | a legenda paga vira observação tipada: hashtag, palavra, bigrama, emoji, menção |
+| `src/grafo.py` | Jaccard, comunidades determinísticas e o eixo **território↔tribo**. Só função pura |
+| `src/assinatura.py` | `P(t\|tribo)/P(t\|fora)`, assinatura da tribo e classificação como distribuição |
 | `src/idioma.py` | separa português de espanhol por heurística. Sem dependência nova |
 | `src/console.py` | faz stdout aguentar emoji. **Sem ele o `ranking` quebra** |
 | `src/preparar.py` | as 7 checagens do ambiente. Verifica e instrui, não instala |
 | `src/db.py` | conexão com o PostgreSQL e execução das migrations |
-| `src/repos/` | **a única camada que escreve SQL** — dez módulos, um por agregado |
+| `src/repos/` | **a única camada que escreve SQL** — onze módulos, um por agregado |
 | `src/banco.py` | SQLite antigo. **Só sobrevive porque `transcrever.py`, `analisar.py` e `editar.py` ainda o importam.** Morre quando a Fase 3 for portada |
 | `src/consultas.py` | idem — substituído por `repos/consultas.py` |
 | `src/coletor.py` | `InstagramCollector` / `ApifyInstagramCollector` — só descobre |
@@ -62,18 +65,22 @@ Módulos de apoio, sem linha de comando própria:
 | `src/legenda.py` | palavras com tempo → `.ass` com karaokê |
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
 | `tests/test_idioma.py` | 26 conferências do detector de idioma |
-| `tests/test_mapeador.py` | 88 conferências do mapeamento, sem rede |
+| `tests/test_lexico.py` | 41 conferências do colhedor de léxico |
+| `tests/test_grafo.py` | 50 conferências do grafo e do eixo território↔tribo |
+| `tests/test_assinatura.py` | 43 conferências da exclusividade e da classificação |
+| `tests/test_mapeador.py` | 114 conferências do mapeamento e das tribos, sem rede |
 | `tests/test_metricas.py` | 34 conferências das contas |
 | `tests/test_banco.py` | 54 conferências do banco e das consultas |
 | `tests/test_coleta.py` | 139 conferências da normalização, storage, download, faxina e critérios |
 | `tests/test_desempenho.py` | 66 conferências dos scores e do crescimento |
 | `tests/test_db.py` | 108 conferências da conexão, das migrations e do config |
 | `tests/test_preparar.py` | 26 conferências do preparo e da saída de console |
-| `tests/test_repos_*.py` | 279 conferências contra um PostgreSQL de verdade |
+| `tests/test_repos_*.py` | 312 conferências contra um PostgreSQL de verdade |
 
-**820 conferências, todas passando** (contadas na saída real, não estimadas).
-Rode as treze antes de dar qualquer coisa por pronta. As `test_repos_*` exigem
-o PostgreSQL de pé; se ele não responder, elas avisam e saem sem falhar.
+**1.013 conferências, todas passando** (contadas na saída real, não
+estimadas). Rode as dezesseis antes de dar qualquer coisa por pronta. As
+`test_repos_*` exigem o PostgreSQL de pé; se ele não responder, elas avisam e
+saem sem falhar.
 
 Apagados em 28/08/2026: `src/ig.py`, `src/buscar.py`, `src/coletar.py`,
 `tests/test_pipeline.py`. A construir: `src/selecionar.py`.
@@ -104,6 +111,16 @@ desfazer, e isso travava faxina de código.
 - **O acento do tema decide a comunidade.** `#tragedias` é espanhola;
   `#tragédias` é portuguesa — são duas comunidades diferentes, e a diferença é
   um acento no que você digita. Medido em 30/08/2026.
+- **O termo não identifica uma comunidade — identifica o território onde
+  várias vivem.** `#tragédias` são pelo menos três tribos: literatura
+  (`sêneca`, `aristófanes`), desastre real (`acidenteaéreo`, `br242`) e drama
+  pessoal (`amor`, `autopiedade`). Por isso o mapeamento agrupa **perfis** e
+  dá a cada termo uma nota **por tribo**, em vez de uma lista de aprovados.
+  Ver [ADR 007](docs/decisions/007-assinatura-tribal-em-vez-de-lista-de-tags.md).
+- **A legenda já foi paga.** Ela chega dentro do item que custou dinheiro, e
+  dela sai gíria, emoji, abreviação, bigrama e menção — sem uma chamada nova.
+  O que o mapeamento observa fica em `term_observations`, **append-only**:
+  é o corpus de fundo da exclusividade e a série temporal do vocabulário.
 - **Antes de buscar, mapeia.** Um tema em português comum não é uma hashtag:
   `#desastresetragedias` devolveu 1 item e zero termos, enquanto `#desastres`
   devolveu 64. O `mapear` descobre o vocabulário, mede a banda do nicho e
@@ -146,6 +163,7 @@ de propósito. Isto é uma ferramenta, não um site publicado.
 - [004 — ffmpeg em vez de Remotion](docs/decisions/004-ffmpeg-em-vez-de-remotion.md)
 - [005 — Apify descobre, yt-dlp baixa; a raspagem própria sai](docs/decisions/005-apify-em-vez-de-raspagem-propria.md)
 - [006 — PostgreSQL nativo em vez de Docker](docs/decisions/006-postgres-nativo-em-vez-de-docker.md) — *vale enquanto a máquina for esta*
+- [007 — Assinatura tribal em vez de lista de tags](docs/decisions/007-assinatura-tribal-em-vez-de-lista-de-tags.md)
 
 ## Processo
 

@@ -4,6 +4,79 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-08-31 — a tribo aparece pelo sub-grafo, e não pela palavra
+
+O mapeamento devolvia uma **lista plana de hashtags**. Essa forma não consegue
+expressar o que se quer saber, e os dois dossiês de 30/08 provam:
+
+- em `tragédiaseresgates`, três tribos dividem uma palavra e ficam no mesmo
+  nível do ranking — literatura (`sêneca`, `aristófanes`, `teatro`), desastre
+  real (`acidenteaéreo`, `br242`, `aviões`) e drama pessoal (`amor`,
+  `autopiedade`);
+- em `desastresetragedias`, `esquilo · grecia · greekliterature ·
+  literaturagriega · littératuregrecque` é tragédia grega coerente em quatro
+  idiomas, e foi lido como ruído. (`esquilo` em espanhol é **Ésquilo**.)
+
+O diagnóstico, nas palavras do usuário: *"`moto` não identifica uma comunidade.
+É apenas o território onde várias comunidades vivem."*
+
+#### A economia que viabilizou tudo
+
+**A legenda já estava paga e estava sendo jogada fora.** O `mapear` recebia os
+itens crus, lia a legenda uma vez para votar idioma, colhia só o campo
+`hashtags` e descartava o resto. Gíria, emoji, abreviação, bigrama e menção
+estavam ali. Colher isso custou **zero chamadas novas**.
+
+#### O que mudou
+
+- **`src/lexico.py`** — item cru vira observação tipada em cinco *kinds*.
+  Emoji agrupado à mão (ZWJ, bandeira e tom de pele contam como um), sem
+  dependência nova. Número é palavra: `244` é o nome de uma tribo.
+- **`migrations/006` + `repos/observacoes.py`** — `term_observations`,
+  append-only. É o corpus de fundo da exclusividade e a série temporal do
+  vocabulário. **A ausência de UNIQUE é a decisão**, não um esquecimento.
+- **`src/grafo.py`** — Jaccard, propagação de rótulos determinística e o eixo
+  território↔tribo por entropia normalizada.
+- **`src/assinatura.py`** — `P(termo|tribo) / P(termo|fora)`, com suavização
+  add-k, e classificação como distribuição com `outros` competindo.
+- **`mapeador.proximos_alvos()`** — a rodada deixa de perguntar "quais as tags
+  mais fortes?" e passa a perguntar "qual observação mais reduz a incerteza
+  sobre a identidade dos clusters?".
+
+#### Três armadilhas de contagem dupla, fechadas com teste
+
+`@fulano_mt` virava as palavras `fulano` e `mt` (sublinhado não é letra para o
+regex); a muralha de trinta hashtags no fim da legenda afogava a prosa; e o
+campo do Actor somava com o regex. Agora o campo manda e o regex é plano B.
+
+#### Um erro corrigido durante a construção
+
+`generalidade()` normalizava pelo número de tribos **em que o termo aparece**.
+Um termo em 2 de 3 tribos dava 0,9183 contra 1,0 de um em 3 de 3 — quase
+empate. E o marcador puro caía em `None` e sumia do eixo, sendo o caso que mais
+interessa. Normalizado pelo universo: marcador é 0,0, território é 1,0.
+
+#### Medido, no cenário das três tribos de moto
+
+| termo | generalidade | leitura |
+|---|---|---|
+| `moto` | 1,0000 | território puro |
+| `grau` | 0,9206 | espalhado, puxando para uma |
+| `role` | 0,5794 | em duas de três |
+| `mandrake`, `torque`, `familia` | 0,0000 | marcador |
+
+E a mesma palavra com nota diferente por tribo: `torque` vale >5 na oficina e
+<1 na quebrada.
+
+#### Verificação
+
+**1.013 conferências, zero falhas**, em 16 arquivos (eram 820). Os dois
+critérios de aceitação passam e podem falhar de verdade. **Falta a prova em
+dado real pago** — nada disso rodou contra chamada nova.
+
+Ver [ADR 007](docs/decisions/007-assinatura-tribal-em-vez-de-lista-de-tags.md)
+e a [T16](tasks/active/T16-assinatura-tribal.md).
+
 ### 2026-08-30 (3) — o mapeamento aprende a ver idioma, e o acento vira decisão
 
 A descrição honesta do processo de mapeamento, feita depois de três rodadas

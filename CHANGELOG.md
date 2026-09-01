@@ -4,6 +4,56 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-08-31 (2) — a prova paga achou três defeitos, e os três eram meus
+
+Duas rodadas reais (`tragédias` e `grau de moto`), **US$ 0,0513 no total**. O
+código passava em 1.013 conferências e ainda assim errava em três lugares que
+só dado real mostraria.
+
+**1. O território inflava a similaridade.** Em `grau de moto`, `#grau`, `#moto`
+e `#graudemoto` estavam em quase todos os 68 perfis. Dois perfis que dividiam
+só o território já ficavam com Jaccard alto, e o agrupamento colapsou num bloco
+de 55. O TF-IDF estava aplicado só na hora de **pontuar** (Fase 3) e não na de
+**comparar** — e comparar vem antes. Entrou `grafo.idf()` e Jaccard ponderado:
+`#moto` (60 de 68) passa a valer 0,12; `#grauderua` (6 de 68), 2,42.
+
+**2. Cinco "tribos" de um perfil só** em `tragédias`. Grupo de um não é tribo —
+é um perfil que não agrupou. E contava no total, estragando a normalização da
+generalidade. Entrou `MINIMO_POR_TRIBO = 3`.
+
+**3. O corte de aresta não pode ser um número.** Duas tentativas falharam antes
+da terceira:
+
+| tentativa | por que falhou |
+|---|---|
+| limiar absoluto `0.06` | as distribuições dos dois temas não têm relação: o mesmo número é o percentil 75 num e o 93 no outro |
+| percentil da distribuição | resolveu o real e quebrou o sintético — a fração certa depende do **tamanho** das comunidades, que é o que se quer descobrir. Circular |
+| **vizinhos mais próximos, k=3** | cada nó guarda só os seus mais parecidos. Não pergunta pela densidade global |
+
+#### Depois dos consertos
+
+| | `tragédias` | `grau de moto` |
+|---|---|---|
+| observações | 23.660 | 3.394 |
+| perfis | 91 | 58 |
+| tribos | 7 | 10 |
+| perfis no mapa | 49 de 55 | 54 de 58 |
+
+Em `grau de moto` o sistema separou a comunidade real (`grauéarte`,
+`graunãoécrime`, `graudequebrada`, `grau244`) de **lojas** (`quilômetros
+rodados`, `pela confiança`), de **notícia/classificado** (`motocicleta`,
+`placa`, `⚠️`), de **fotógrafo de evento** (`nivercross`, `📸`) e de **página de
+meme** (`memes`, `😂`). Emoji virou marcador: `🥷🏼` na tribo que dá grau.
+
+**Achado do léxico:** legenda de nicho de moto é curta, quase só hashtag — 17
+observações por post contra ~100 em `tragédias`.
+
+**Defeito conhecido que sobrou:** a lista de palavras vazias do `lexico.py` é
+pequena demais. `também`, `dia`, `vida`, `tudo`, `durante`, `coisa` ainda sujam
+a leitura da assinatura.
+
+**1.027 conferências, zero falhas.**
+
 ### 2026-08-31 — a tribo aparece pelo sub-grafo, e não pela palavra
 
 O mapeamento devolvia uma **lista plana de hashtags**. Essa forma não consegue

@@ -66,7 +66,7 @@ Módulos de apoio, sem linha de comando própria:
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
 | `tests/test_idioma.py` | 26 conferências do detector de idioma |
 | `tests/test_lexico.py` | 41 conferências do colhedor de léxico |
-| `tests/test_grafo.py` | 50 conferências do grafo e do eixo território↔tribo |
+| `tests/test_grafo.py` | 64 conferências do grafo e do eixo território↔tribo |
 | `tests/test_assinatura.py` | 43 conferências da exclusividade e da classificação |
 | `tests/test_mapeador.py` | 114 conferências do mapeamento e das tribos, sem rede |
 | `tests/test_metricas.py` | 34 conferências das contas |
@@ -77,7 +77,7 @@ Módulos de apoio, sem linha de comando própria:
 | `tests/test_preparar.py` | 26 conferências do preparo e da saída de console |
 | `tests/test_repos_*.py` | 312 conferências contra um PostgreSQL de verdade |
 
-**1.013 conferências, todas passando** (contadas na saída real, não
+**1.027 conferências, todas passando** (contadas na saída real, não
 estimadas). Rode as dezesseis antes de dar qualquer coisa por pronta. As
 `test_repos_*` exigem o PostgreSQL de pé; se ele não responder, elas avisam e
 saem sem falhar.

@@ -20,7 +20,10 @@ import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 
+import assinatura
 import config
+import grafo
+import lexico
 
 # Onde os dossies moram. Nao vai para o `storage.py` porque o `Storage` daquele
 # modulo e moldado inteiro em torno de `(usuario, post_id)` — um dossie nao e
@@ -314,8 +317,78 @@ def _ritmo(posts):
 # -------------------------------------------------------------- o dossie
 
 
+# ----------------------------------------------------------------- as tribos
+
+
+# Termo visto num perfil so nao liga ninguem a ninguem: ele nao cria aresta e
+# so engrossa o denominador do Jaccard. Numa amostra real a cauda de termo
+# unico e a MAIOR parte das linhas, e mante-la faria todo perfil parecer
+# distante de todo perfil.
+MINIMO_DE_PERFIS_PARA_AGRUPAR = 2
+
+# Perfil sobre o qual quase nada foi observado casa com qualquer um por acaso:
+# o Jaccard fica alto porque o denominador e minusculo, nao porque as duas
+# contas falem parecido.
+MINIMO_DE_TERMOS_POR_PERFIL = 4
+
+
+def secao_de_tribos(colhido, limiar=grafo.LIMIAR_DE_ARESTA,
+                    minimo_de_perfis=MINIMO_DE_PERFIS_PARA_AGRUPAR,
+                    minimo_de_termos=MINIMO_DE_TERMOS_POR_PERFIL):
+    """Observacoes -> as tribos, com assinatura e com a nota de cada perfil.
+
+    O caminho inteiro da Fase 2 e da Fase 3 num lugar so, porque as duas nao
+    fazem sentido separadas: o agrupamento e o andaime e a assinatura e o
+    produto, e quem le o dossie quer os dois na mesma secao.
+
+    Devolve `None` quando o dado nao sustenta agrupamento — menos de duas
+    tribos. Devolver uma tribo unica chamada "o nicho" seria dizer que nao ha
+    subdivisao, quando o que houve foi amostra pequena demais para ver.
+    """
+    contagem = lexico.contar(colhido)
+    perfis_por_termo = {
+        termo: set(dados["perfis"])
+        for termo, dados in contagem.items()
+        if len(dados["perfis"]) >= minimo_de_perfis
+    }
+    if not perfis_por_termo:
+        return None
+
+    tribo_do_perfil = grafo.tribos_de_perfis(
+        perfis_por_termo, limiar=limiar, minimo_de_termos=minimo_de_termos)
+    grupos = grafo.agrupar(tribo_do_perfil)
+    if len(grupos) < 2:
+        return None
+
+    kinds = {termo: dados["kind"] for termo, dados in contagem.items()}
+    modelo = assinatura.modelo(perfis_por_termo, tribo_do_perfil,
+                               kind_do_termo=kinds)
+
+    generalidades = {
+        termo: grafo.generalidade(
+            grafo.espalhamento(perfis, tribo_do_perfil), len(grupos))
+        for termo, perfis in perfis_por_termo.items()
+    }
+
+    termos_do_perfil = grafo.inverter(perfis_por_termo)
+    return {
+        "quantas": len(grupos),
+        "_como_ler": (
+            "`semantic_core` e o territorio onde a tribo mora; "
+            "`identity_markers` e o que a distingue das vizinhas. "
+            "`generalidade` vai de 0 (marcador) a 1 (territorio), e "
+            "`exclusividade` acima de 1 e desproporcionalmente desta tribo."),
+        "assinaturas": assinatura.montar_todas(modelo, generalidades),
+        "perfis": {
+            perfil: assinatura.classificar(modelo, termos_do_perfil.get(perfil))
+            for perfil in sorted(tribo_do_perfil)
+        },
+    }
+
+
 def montar_dossie(tema, contagens, perfis, posts=None, custo_usd=0.0,
-                  rodadas=0, parou_por=None, limite_de_tags=40, alvo="pt"):
+                  rodadas=0, parou_por=None, limite_de_tags=40, alvo="pt",
+                  tribos=None):
     """O que o mapeamento aprendeu, pronto para voce marcar o que presta.
 
     Tudo nasce com `"entra": false`. Nada entra sozinho — decisao do usuario em
@@ -349,6 +422,10 @@ def montar_dossie(tema, contagens, perfis, posts=None, custo_usd=0.0,
                           "false nao vai para o banco." % tema),
         "idioma_alvo": alvo,
         "numeros": numeros,
+        # `None` quando o dado nao sustentou agrupamento. A chave fica na
+        # mesma: dossie sem a chave faria quem le achar que esqueceram, e
+        # dossie com tribo inventada e pior que dossie sem tribo.
+        "tribos": tribos,
         "tags": [dict(linha, entra=False) for linha in tags],
         "_sobre_os_descartados": (
             "Detectados em outro idioma que nao %r. Ficam aqui em vez de "

@@ -344,10 +344,14 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
                                             custo_usd=real), coleta_id)
         cx.commit()
 
+    # As tribos saem do lexico inteiro, e nao so das hashtags: e a legenda que
+    # separa `#tragédias` de literatura de `#tragédias` de desastre aereo.
+    tribos = mapeador.secao_de_tribos(colhido)
+
     dossie = mapeador.montar_dossie(tema, contagens, list(perfis.values()),
                                     posts, custo_usd=real,
                                     rodadas=rodada, parou_por=parou_por,
-                                    alvo=idioma_alvo)
+                                    alvo=idioma_alvo, tribos=tribos)
     destino = mapeador.gravar_dossie(dossie)
 
     _linha()
@@ -377,6 +381,22 @@ def mapear(cfg, tema, teto_usd=None, rodadas=None, saturacao=None,
             _linha("  #%-26s %2d perfis  [%s]" % (linha["termo"],
                                                   linha["perfis"],
                                                   linha["idioma"]))
+    if tribos:
+        _linha()
+        _linha("%d tribo(s) dentro do tema. `%s` e o territorio; o que separa "
+               "uma da outra:" % (tribos["quantas"], tema))
+        for marca in tribos["assinaturas"]:
+            _linha("  tribo de %d perfil(is): %s"
+                   % (len(marca["perfis"]),
+                      ", ".join(marca["identity_markers"][:6]) or "(sem "
+                      "marcador acima do limiar)"))
+            _linha("    territorio: %s"
+                   % ", ".join(marca["semantic_core"][:6]))
+    else:
+        _linha()
+        _linha("Nao deu para separar tribos — amostra pequena demais para "
+               "agrupar. O vocabulario esta no dossie do mesmo jeito.")
+
     banda = dossie["numeros"]["banda_sugerida"]
     _linha()
     ritmo = dossie["numeros"]["ritmo_dias_entre_posts"]

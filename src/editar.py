@@ -35,6 +35,7 @@ import console
 import banco
 import config
 import consultas
+import enquadrar
 import fala
 import legenda as modulo_legenda
 import midia
@@ -140,23 +141,18 @@ def _bloco_de_texto(rotulo, conteudo, estilo, pasta_trabalho, entrada, saida):
 
 
 def montar_filtros(template, headline, perfil, tem_logo, tem_legenda,
-                   pasta_trabalho):
-    """A corrente de filtros inteira, em ordem."""
+                   pasta_trabalho, fonte=(1080, 1920)):
+    """A corrente de filtros inteira, em ordem.
+
+    `fonte` sao as dimensoes do video de entrada, medidas com `ffprobe`. Elas
+    entram porque o enquadramento faz a conta em inteiro — ver `enquadrar.py`.
+    O padrao 1080x1920 existe so para o teste nao precisar de arquivo.
+    """
     canvas = template["canvas"]
-    area = template["video"]
 
-    largura_video = canvas["largura"] - 2 * area.get("margem_lateral", 60)
-    filtros = [
-        "color=c=%s:s=%dx%d:r=%d[fundo]" % (
-            cor_para_ffmpeg(canvas.get("fundo", "#FFFFFF")),
-            canvas["largura"], canvas["altura"], canvas.get("fps", 30)),
-        "[0:v]scale=%d:%d:force_original_aspect_ratio=decrease[video]" % (
-            largura_video, area.get("altura", 980)),
-        "[fundo][video]overlay=(W-w)/2:%d+(%d-h)/2:shortest=1[base]" % (
-            area.get("topo", 560), area.get("altura", 980)),
-    ]
-
-    atual = "base"
+    geometria = enquadrar.do_template(template, fonte[0], fonte[1])
+    filtros, atual = enquadrar.filtros(
+        geometria, template, cor_para_ffmpeg(canvas.get("fundo", "#FFFFFF")))
 
     cabecalho = template.get("headline", {})
     if cabecalho.get("mostrar", True) and headline:
@@ -209,8 +205,14 @@ def editar_video(entrada, saida, template, headline="", perfil="", palavras=None
         caminho_logo = template.get("logo", {}).get("arquivo")
         tem_logo = bool(caminho_logo) and Path(caminho_logo).is_file()
 
+        # As dimensoes reais da entrada, medidas. O enquadramento nao pode
+        # supor 9:16: material proprio vem em tudo quanto e proporcao, e e
+        # justamente onde o `encaixar` cego encolhia o video pela metade.
+        fonte = midia.dimensoes(entrada, executavel)
+
         filtros, ultimo = montar_filtros(template, headline, perfil, tem_logo,
-                                         bool(arquivo_legenda), pasta_trabalho)
+                                         bool(arquivo_legenda), pasta_trabalho,
+                                         fonte)
 
         comando = [executavel, "-y", "-loglevel", "error", "-i", str(entrada.resolve())]
         if tem_logo:
@@ -419,7 +421,8 @@ def editar_pasta(pasta, template, pasta_saida, pares, ffmpeg=None,
         try:
             gasto = editar_video(video, saida, template, headline, perfil,
                                  palavras, ffmpeg)
-        except (ErroDeEdicao, midia.ErroDeMidia) as erro:
+        except (ErroDeEdicao, midia.ErroDeMidia,
+                enquadrar.ErroDeEnquadramento) as erro:
             print("      FALHOU: %s" % str(erro)[:300])
             registro["situacao"] = "falhou"
             registro["erro"] = str(erro)[:500]
@@ -578,7 +581,8 @@ def main():
     try:
         template = carregar_template(args.template)
         ffmpeg = midia.achar_ffmpeg()
-    except (ErroDeEdicao, midia.ErroDeMidia) as erro:
+    except (ErroDeEdicao, midia.ErroDeMidia,
+            enquadrar.ErroDeEnquadramento) as erro:
         print("\n%s\n" % erro, file=sys.stderr)
         return 1
 
@@ -587,7 +591,8 @@ def main():
     if args.pasta is not None:
         try:
             return rodar_pasta(args, template, ffmpeg)
-        except (ErroDeEdicao, midia.ErroDeMidia) as erro:
+        except (ErroDeEdicao, midia.ErroDeMidia,
+                enquadrar.ErroDeEnquadramento) as erro:
             print("\n%s\n" % erro, file=sys.stderr)
             return 1
 

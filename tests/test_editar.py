@@ -140,12 +140,12 @@ filtros, ultimo = editar.montar_filtros(TEMPLATE, "Olha isso", "alguem",
 
 conferir_que("comeca criando o fundo do tamanho do canvas",
              filtros[0].startswith("color=c=0xFFFFFF:s=1080x1920:r=30[fundo]"))
-conferir_que("depois encaixa o video sem distorcer",
-             "force_original_aspect_ratio=decrease" in filtros[1])
-conferir_que("na largura do canvas menos as duas margens",
-             "scale=960:980" in filtros[1])
-conferir_que("e sobrepoe centralizado na area do template",
-             "[fundo][video]overlay=(W-w)/2:560+(980-h)/2" in filtros[2])
+conferir_que("depois encaixa a fonte 9:16 dentro da caixa, sem distorcer",
+             filtros[1] == "[0:v]scale=550:980[video]")
+conferir_que("a geometria vem em inteiro, nao em expressao do ffmpeg",
+             "(W-w)" not in filtros[2] and "force_original" not in filtros[1])
+conferir_que("e sobrepoe somando a margem lateral e o topo do template",
+             filtros[2] == "[fundo][video]overlay=265:560:shortest=1[base]")
 conferir_que("com shortest, para o fundo infinito nao esticar o video",
              "shortest=1" in filtros[2])
 

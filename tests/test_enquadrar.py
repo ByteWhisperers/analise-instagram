@@ -346,6 +346,56 @@ conferir("o filtro do fundo e identico com e sem zoom na frente",
 conferir_que("mas o da frente muda", com[2] != sem[2])
 
 
+print("\n=== a correcao de cor ===")
+
+conferir("sem ajuste, sem filtro", enquadrar.filtro_de_cor(None), "")
+conferir("ajuste neutro nao vira filtro: um eq que nao muda nada custa "
+         "processamento por quadro para nada",
+         enquadrar.filtro_de_cor({"brilho": 0.0, "saturacao": 1.0}), "")
+conferir("mexida imperceptivel tambem nao entra",
+         enquadrar.filtro_de_cor({"brilho": 0.001, "saturacao": 1.01}), "")
+conferir("dicionario vazio nao vira filtro", enquadrar.filtro_de_cor({}), "")
+
+conferir("brilho de verdade entra",
+         enquadrar.filtro_de_cor({"brilho": 0.04, "saturacao": 1.0}),
+         "eq=brightness=0.0400:saturation=1.000")
+conferir("saturacao de verdade entra",
+         enquadrar.filtro_de_cor({"brilho": 0.0, "saturacao": 1.74}),
+         "eq=brightness=0.0000:saturation=1.740")
+conferir("brilho negativo idem",
+         enquadrar.filtro_de_cor({"brilho": -0.019, "saturacao": 1.2}),
+         "eq=brightness=-0.0190:saturation=1.200")
+
+cor = {"brilho": 0.05, "saturacao": 1.3}
+corrente, _ = enquadrar.filtros(enquadrar.do_template(TEMPLATE, *EM_PE),
+                                TEMPLATE, "0xFFFFFF", ajuste_de_cor=cor)
+conferir("a cor entra no mesmo filtro da frente, logo depois do scale",
+         corrente[1],
+         "[0:v]scale=550:980,eq=brightness=0.0500:saturation=1.300[video]")
+conferir_que("e nao toca no fundo de cor solida", "eq=" not in corrente[0])
+
+sem_cor, _ = enquadrar.filtros(enquadrar.do_template(TEMPLATE, *EM_PE),
+                               TEMPLATE, "0xFFFFFF")
+conferir("sem pedir cor, a corrente sai como sempre saiu",
+         sem_cor[1], "[0:v]scale=550:980[video]")
+
+com_corte = {"canvas": TEMPLATE["canvas"],
+             "video": dict(TEMPLATE["video"], ajuste="preencher")}
+corrente, _ = enquadrar.filtros(enquadrar.do_template(com_corte, *EM_PE),
+                                com_corte, "0xFFFFFF", ajuste_de_cor=cor)
+conferir_que("com corte, a cor vem DEPOIS do crop, no fim da corrente",
+             corrente[1].endswith("crop=960:980:0:363,"
+                                  "eq=brightness=0.0500:saturation=1.300[video]"))
+
+corrente, _ = enquadrar.filtros(enquadrar.do_template(desfoque, *EM_PE),
+                                desfoque, "0xFFFFFF", ajuste_de_cor=cor)
+conferir_que("no desfoque, a cor vai so na FRENTE",
+             "eq=brightness=0.0500" in corrente[2])
+conferir_que("nunca no fundo borrado: igualar a luz do fundo ao nicho nao faz "
+             "sentido, e ele ja levou o escurecer",
+             "brightness=0.0500" not in corrente[1])
+
+
 print("\n" + "=" * 52)
 if falhas:
     print("%d TESTE(S) FALHARAM:" % len(falhas))

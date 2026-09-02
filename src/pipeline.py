@@ -33,9 +33,11 @@ import lexico
 import mapeador
 import db
 import desempenho
+import formato
+import midia
 from downloader import YtDlpDownloader
-from repos import (consultas, contents, costs, jobs, media, metrics, niches,
-                   observacoes, profiles)
+from repos import (analyses, consultas, contents, costs, jobs, media, metrics,
+                   niches, observacoes, profiles)
 from storage import LocalStorage
 
 TIPO_DOWNLOAD = "video_download"
@@ -966,6 +968,158 @@ def baixar(cfg, limite=None, concorrencia=None, tentar_de_novo=False):
 # ----------------------------------------------------------------- 4. status
 
 
+def medir(cfg, limite=None, refazer=False, sugerir=None):
+    """Le os videos ja baixados com o ffmpeg e grava COMO eles sao construidos.
+
+    Esta etapa existe porque o banco sabia muito sobre a linguagem do nicho e
+    nada sobre o video. `term_observations` tinha 27 mil linhas e
+    `content_analyses` estava vazia — dava para dizer que palavra a tribo usa,
+    nao dava para dizer se ela corta a cada 3 ou a cada 15 segundos.
+
+    Nao gasta um centavo: ffmpeg e ffprobe rodam locais.
+    """
+    limite = limite or 200
+    _titulo("4. Medicao do formato")
+
+    try:
+        ffmpeg = midia.achar_ffmpeg()
+    except midia.ErroDeMidia as erro:
+        _linha(str(erro))
+        return 1
+
+    medidos = falharam = sem_arquivo = 0
+
+    with db.conectar(cfg) as cx:
+        if refazer:
+            fila = [{"content_id": l[0], "codigo": l[1]} for l in cx.execute(
+                "SELECT id, platform_content_id FROM contents "
+                "WHERE content_type IN ('reel','video') "
+                "ORDER BY published_at DESC NULLS LAST LIMIT %s", (limite,))]
+        else:
+            fila = analyses.sem_analise(cx, modelo=formato.PRODUTOR, limite=limite)
+
+        if not fila:
+            _linha("Nada novo para medir. Use --refazer para medir tudo de novo.")
+            return 0
+
+        _linha("%d video(s) na fila.\n" % len(fila))
+
+        for indice, item in enumerate(fila, start=1):
+            caminho = media.caminho_do_video(cx, item["content_id"])
+            if not caminho or not Path(caminho).is_file():
+                _linha("(%d/%d) %s — sem arquivo em disco, pulando"
+                       % (indice, len(fila), item["codigo"]))
+                sem_arquivo += 1
+                continue
+
+            try:
+                perfil = formato.montar(
+                    midia.ler_ficha(caminho, ffmpeg),
+                    midia.ler_cortes(caminho, ffmpeg),
+                    midia.ler_imagem(caminho, ffmpeg),
+                    midia.ler_audio(caminho, ffmpeg))
+            except midia.ErroDeMidia as erro:
+                _linha("(%d/%d) %s — FALHOU: %s"
+                       % (indice, len(fila), item["codigo"], str(erro)[:160]))
+                falharam += 1
+                continue
+
+            analyses.salvar_do_conteudo(cx, item["content_id"], perfil,
+                                        modelo=formato.PRODUTOR,
+                                        versao=formato.VERSAO)
+            cx.commit()
+            medidos += 1
+
+            cortes_ = perfil["cortes"]
+            _linha("(%d/%d) %-14s %-5s %5.1fs  %4s cortes (%s/min)  luz %s"
+                   % (indice, len(fila), item["codigo"],
+                      perfil["ficha"]["proporcao"] or "?",
+                      perfil["ficha"]["duracao_s"] or 0,
+                      cortes_["quantos"], cortes_["por_minuto"],
+                      perfil["imagem"]["brilho"]))
+
+        _linha("\n%d medido(s), %d sem arquivo, %d falhou(ram)."
+               % (medidos, sem_arquivo, falharam))
+
+        if medidos or not refazer:
+            perfil = _mostrar_perfil(cx)
+            if sugerir and perfil and perfil.get("quantos"):
+                _escrever_template(perfil, sugerir)
+
+    return 0
+
+
+def _escrever_template(perfil, nome):
+    """Grava `templates/<nome>.json` derivado do que foi medido."""
+    import editar
+
+    destino = config.RAIZ / "templates" / ("%s.json" % nome)
+    if destino.exists():
+        _linha()
+        _linha("Ja existe templates/%s.json. Nao vou sobrescrever — escolha"
+               " outro nome, ou apague o antigo." % nome)
+        return
+
+    base = editar.carregar_template("desfoque")
+    novo = formato.sugerir(perfil, nome, base)
+    with destino.open("w", encoding="utf-8") as aberto:
+        json.dump(novo, aberto, ensure_ascii=False, indent=2)
+
+    _linha()
+    _linha("Escrito: templates/%s.json" % nome)
+    _linha("  ajuste: %s   alvo de cor: brilho %s, saturacao %s"
+           % (novo["video"]["ajuste"], novo["cor"]["brilho_alvo"],
+              novo["cor"]["saturacao_alvo"]))
+    _linha("  use com:  editar.py --pasta --template %s" % nome)
+
+
+def _mostrar_perfil(cx):
+    """A faixa em que os vencedores vivem. Faixa, nao media."""
+    guardados = [linha["analise"] for linha in
+                 analyses.todas_do_modelo(cx, formato.PRODUTOR)]
+    perfil = formato.perfil_do_conjunto(guardados)
+
+    if not perfil.get("quantos"):
+        return None
+
+    _titulo("O perfil dos medidos")
+    _linha("Baseado em %d video(s). Faixa = 1o quartil, mediana, 3o quartil."
+           % perfil["quantos"])
+    _linha()
+
+    def faixa(rotulo, chave, sufixo=""):
+        q1, meio, q3 = perfil.get(chave) or (None, None, None)
+        if meio is None:
+            return
+        _linha("  %-22s %s  (de %s a %s)%s"
+               % (rotulo, _n(meio), _n(q1), _n(q3), sufixo))
+
+    _linha("  %-22s %s" % ("proporcao dominante", perfil["proporcao_dominante"]))
+    _linha("  %-22s %d com, %d sem"
+           % ("tarja preta", perfil["com_tarja"], perfil["sem_tarja"]))
+    faixa("duracao", "duracao_s", " segundos")
+    faixa("cortes por minuto", "cortes_por_minuto")
+    faixa("segundos por corte", "segundos_por_corte")
+    faixa("brilho (0-255)", "brilho")
+    faixa("saturacao", "saturacao")
+    faixa("volume medio", "volume_medio_db", " dB")
+
+    _linha()
+    _linha("O editor aplica moldura; ele NAO remonta o video. O ritmo de corte")
+    _linha("acima e informacao para voce gravar diferente, nao algo que a")
+    _linha("maquina vá aplicar sozinha.")
+    return perfil
+
+
+def _n(valor):
+    """Numero curto: sem casa decimal quando nao precisa."""
+    if valor is None:
+        return "?"
+    if float(valor) == int(valor):
+        return "%d" % valor
+    return "%.1f" % valor
+
+
 def status(cfg):
     with db.conectar(cfg) as cx:
         _titulo("Cobertura da esteira")
@@ -1358,6 +1512,14 @@ def ler_argumentos(argv=None):
     b.add_argument("--concorrencia", type=int)
     b.add_argument("--tentar-de-novo", action="store_true")
 
+    md = sub.add_parser("medir",
+                        help="mp4 no disco -> como o vídeo é construído")
+    md.add_argument("--limite", type=int, default=200)
+    md.add_argument("--refazer", action="store_true",
+                    help="mede de novo o que já foi medido")
+    md.add_argument("--sugerir", metavar="NOME",
+                    help="escreve templates/NOME.json a partir do que foi medido")
+
     sub.add_parser("status", help="onde a esteira está e quanto custou")
 
     r = sub.add_parser("ranking", help="quem performa acima do grupo")
@@ -1407,6 +1569,8 @@ def main(argv=None):
             return status(cfg)
         if args.comando == "ranking":
             return ranking(cfg, args.nicho, args.limite)
+        if args.comando == "medir":
+            return medir(cfg, args.limite, args.refazer, args.sugerir)
         if args.comando == "limpar":
             return limpar(cfg, args.transcritos, args.orfas, args.antes_de,
                           args.aplicar)

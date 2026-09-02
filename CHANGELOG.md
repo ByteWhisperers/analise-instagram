@@ -4,6 +4,76 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-09-02 — o ffmpeg passou a LER vídeo, e a edição virou dinâmica
+
+Duas coisas, ligadas: o enquadramento ganhou botões, e o banco ganhou a
+primeira informação que ele nunca teve — **como o vídeo é construído**.
+
+**O enquadramento.** O template só tinha `topo`, `altura` e `margem_lateral`;
+não havia como cortar, dar zoom nem deslocar. Com fonte já em 9:16, o
+`meme-branco` reduzia o vídeo a 51% do quadro (`y=560..1540`, quando o centro
+seria `470..1450`). `src/enquadrar.py`, função pura, com três modos —
+`encaixar` (o antigo, e ainda o padrão), `preencher` e `desfoque` — mais
+`zoom`, `deslocar_x` e `deslocar_y` nos três. A conta é inteira em Python, não
+expressão de ffmpeg: prender o corte dentro da imagem com `min`/`max` dentro do
+filtro exigiria escapar vírgula, e este projeto já apanhou de caractere
+especial em filtro no Windows.
+
+**A medição.** `pipeline.py medir` lê os mp4 do disco com o ffmpeg e grava em
+`content_analyses`, que existia e estava vazia. Novo `src/formato.py`, função
+pura, e quatro leitores em `midia.py`. **Duas passadas por vídeo:** cena exige
+taxa cheia, o resto cabe junto a 1 quadro por segundo. Custo em dinheiro: zero.
+
+**O que os 15 vídeos disseram** — 4 perfis do nicho `receitas`:
+
+| Medida | Faixa (q1, mediana, q3) |
+|---|---|
+| proporção | **9:16 nos 15**, nenhum com tarja |
+| duração | 57,9 · **71,6** · 88,0 s |
+| cortes por minuto | 12,6 · **17,6** · 24,3 |
+| brilho (0-255) | 108,1 · **117,5** · 122,0 |
+| saturação | 15,8 · **20,4** · 23,2 |
+
+**E o que eles NÃO disseram.** O volume ficou entre −17,6 e −16,0 dB nos 15, e
+os picos dentro de 0,9 dB. Quatro perfis diferentes não convergem assim por
+escolha: **isso é a normalização de sonoridade do próprio Instagram.** Por isso
+`formato.sugerir()` não deriva alvo de áudio — derivar seria lavar um artefato
+de plataforma como se fosse padrão do nicho. Está escrito no template gerado
+para ninguém reintroduzir depois.
+
+**O laço fechado.** `pipeline.py medir --sugerir receitas` escreve
+`templates/receitas.json` a partir da medição. Na edição, `cor.igualar` faz o
+editor **medir cada vídeo dele** e aplicar a diferença até o alvo — as três
+cobaias receberam ajustes diferentes (`x1.02`, `x1.74`, `x1.08` de saturação),
+que é o que separa edição dinâmica de aplicar o mesmo `eq` em tudo.
+
+**O corte continua fora, de propósito.** O editor aplica moldura, não remonta o
+vídeo. O ritmo medido vira linha de relatório para ele gravar diferente.
+
+**Três defeitos achados, e nenhum deles apareceria lendo código:**
+
+1. `zoom or 1.0` tratava zero como ausente — `zoom=0` virava 1.0 calado. Pego
+   pelo teste.
+2. O modo `desfoque` cortava a frente, anulando a razão de existir. Só
+   `preencher` usa a maior razão. Pego num ensaio a seco.
+3. **O `write_text` do Windows traduzia `
+` em `
+
+`**, o `drawtext` contava
+   duas quebras, e a headline de duas linhas saía com 155px de vão onde o
+   template pedia 86. Pego olhando o quadro. Junto veio `text_align=C`: sem
+   ele, `x=(w-text_w)/2` centra o bloco pela linha mais larga e as curtas ficam
+   encostadas à esquerda.
+
+**214 conferências novas**: `test_enquadrar` 91 e `test_formato` 105, ambos
+novos, mais 18 no `test_editar`. Total: **1.477, todas passando**.
+
+Uma nota de processo: os dois blocos de teste novos foram inseridos por
+`str.replace`, que **não casou e não reclamou** — os arquivos ficaram sem eles e
+a suíte passou porque não havia o que falhar. Só apareceu ao conferir a
+contagem por arquivo contra o que eu tinha escrito aqui. Contar é barato e pega
+esse tipo de coisa.
+
 ### 2026-09-01 — o editor não estava por construir: estava construído e desligado
 
 Começou o pipeline de edição em massa (T8). O levantamento mudou o trabalho:

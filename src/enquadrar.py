@@ -158,7 +158,8 @@ def do_template(template, fonte_l, fonte_a):
                     area.get("deslocar_y", 0))
 
 
-def filtros(geometria, template, cor_do_fundo, rotulo_saida="base"):
+def filtros(geometria, template, cor_do_fundo, rotulo_saida="base",
+            ajuste_de_cor=None):
     """A geometria vira corrente de filtros. Devolve (lista, rotulo_final).
 
     Entra sempre por `[0:v]` e sai no rotulo pedido, para o resto de
@@ -212,6 +213,14 @@ def filtros(geometria, template, cor_do_fundo, rotulo_saida="base"):
     if geometria["corte"]:
         corte_l, corte_a, corte_x, corte_y = geometria["corte"]
         escalado += ",crop=%d:%d:%d:%d" % (corte_l, corte_a, corte_x, corte_y)
+
+    # A correcao de cor vai na FRENTE, nunca no fundo desfocado: igualar a luz
+    # do fundo ao nicho nao faz sentido, e mexer nele duas vezes (ja levou o
+    # `escurecer`) empilharia dois ajustes na mesma imagem.
+    cor = filtro_de_cor(ajuste_de_cor)
+    if cor:
+        escalado += "," + cor
+
     corrente.append(escalado + "[video]")
 
     # `shortest` so importa quando o fundo e `color=`, que e infinito. No modo
@@ -234,6 +243,21 @@ def _encher_o_canvas(geometria, canvas):
     fonte_l, fonte_a = geometria["fonte"]
     return calcular(fonte_l, fonte_a, canvas["largura"], canvas["altura"],
                     PREENCHER)
+
+
+def filtro_de_cor(ajuste):
+    """`{"brilho": 0.04, "saturacao": 1.1}` -> `eq=...`, ou "" se nao mexe.
+
+    Devolve vazio quando o ajuste e neutro. Um `eq` que nao muda nada custa
+    uma passada de processamento por quadro para nada.
+    """
+    if not ajuste:
+        return ""
+    brilho = float(ajuste.get("brilho") or 0)
+    saturacao = float(ajuste.get("saturacao") or 1.0)
+    if abs(brilho) < 0.005 and abs(saturacao - 1.0) < 0.02:
+        return ""
+    return "eq=brightness=%.4f:saturation=%.3f" % (brilho, saturacao)
 
 
 def _escurecer(quanto):

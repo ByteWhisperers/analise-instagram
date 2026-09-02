@@ -37,6 +37,7 @@ import config
 import consultas
 import enquadrar
 import fala
+import formato
 import legenda as modulo_legenda
 import midia
 import roteiro as modulo_roteiro
@@ -109,7 +110,12 @@ def _bloco_de_texto(rotulo, conteudo, estilo, pasta_trabalho, entrada, saida):
        porque o ffmpeg roda com a pasta de trabalho como diretório atual.
     """
     arquivo = pasta_trabalho / ("%s.txt" % rotulo)
-    arquivo.write_text(conteudo, encoding="utf-8")
+    # `newline=""` desliga a traducao de quebra de linha do Windows. Sem isso o
+    # Python grava "\r\n", o drawtext conta o \r como quebra tambem, e a
+    # headline de duas linhas sai com o dobro do vao. Medido em 02/09/2026:
+    # 155px de vao onde o template pedia 86.
+    with arquivo.open("w", encoding="utf-8", newline="") as aberto:
+        aberto.write(conteudo)
 
     partes = [
         "textfile=%s.txt" % rotulo,
@@ -118,6 +124,11 @@ def _bloco_de_texto(rotulo, conteudo, estilo, pasta_trabalho, entrada, saida):
         "x=(w-text_w)/2",
         "y=%d" % estilo.get("topo", 100),
         "line_spacing=%d" % estilo.get("espaco_entre_linhas", 10),
+        # Centraliza CADA linha, nao o bloco. Sem isto, `x=(w-text_w)/2` centra
+        # o bloco pela linha mais larga e as curtas ficam encostadas na
+        # esquerda — foi o que apareceu na headline de duas linhas em
+        # 02/09/2026, com "calda" torto embaixo de uma linha cheia.
+        "text_align=C",
     ]
 
     # Contorno. So entra quando o template pede, e o padrao e zero — assim o
@@ -141,7 +152,7 @@ def _bloco_de_texto(rotulo, conteudo, estilo, pasta_trabalho, entrada, saida):
 
 
 def montar_filtros(template, headline, perfil, tem_logo, tem_legenda,
-                   pasta_trabalho, fonte=(1080, 1920)):
+                   pasta_trabalho, fonte=(1080, 1920), ajuste_de_cor=None):
     """A corrente de filtros inteira, em ordem.
 
     `fonte` sao as dimensoes do video de entrada, medidas com `ffprobe`. Elas
@@ -152,7 +163,8 @@ def montar_filtros(template, headline, perfil, tem_logo, tem_legenda,
 
     geometria = enquadrar.do_template(template, fonte[0], fonte[1])
     filtros, atual = enquadrar.filtros(
-        geometria, template, cor_para_ffmpeg(canvas.get("fundo", "#FFFFFF")))
+        geometria, template, cor_para_ffmpeg(canvas.get("fundo", "#FFFFFF")),
+        ajuste_de_cor=ajuste_de_cor)
 
     cabecalho = template.get("headline", {})
     if cabecalho.get("mostrar", True) and headline:
@@ -187,7 +199,7 @@ def montar_filtros(template, headline, perfil, tem_logo, tem_legenda,
 
 
 def editar_video(entrada, saida, template, headline="", perfil="", palavras=None,
-                 ffmpeg=None):
+                 ffmpeg=None, ajuste_de_cor=None):
     """Edita um video. Devolve quantos segundos levou."""
     entrada = Path(entrada)
     if not entrada.is_file():
@@ -212,7 +224,7 @@ def editar_video(entrada, saida, template, headline="", perfil="", palavras=None
 
         filtros, ultimo = montar_filtros(template, headline, perfil, tem_logo,
                                          bool(arquivo_legenda), pasta_trabalho,
-                                         fonte)
+                                         fonte, ajuste_de_cor)
 
         comando = [executavel, "-y", "-loglevel", "error", "-i", str(entrada.resolve())]
         if tem_logo:
@@ -367,6 +379,27 @@ def _modelo_sob_demanda(nome, tipo_computacao):
     return obter
 
 
+def igualar_cor(video, template, ffmpeg=None):
+    """Mede a cor DESTE video e diz quanto mexer para chegar no alvo do nicho.
+
+    E aqui que a edicao deixa de ser molde fixo e passa a depender do arquivo:
+    o alvo vem do banco (`pipeline.py medir`), a medida vem do video, e o
+    ajuste e a diferenca entre os dois. Sem medir a entrada, "igualar ao nicho"
+    seria aplicar o mesmo `eq` em tudo — que e o oposto de igualar.
+
+    Devolve `None` quando o template nao pede, e o custo e uma passada leve de
+    ffmpeg (1 quadro por segundo), so nesse caso.
+    """
+    cor = template.get("cor") or {}
+    if not cor.get("igualar"):
+        return None
+
+    medido = formato.imagem(midia.ler_imagem(video, ffmpeg))
+    return formato.ajuste_de_cor(medido.get("brilho"), medido.get("saturacao"),
+                                 cor.get("brilho_alvo"),
+                                 cor.get("saturacao_alvo"))
+
+
 def editar_pasta(pasta, template, pasta_saida, pares, ffmpeg=None,
                  obter_modelo=None, nome_modelo="small", idioma="pt",
                  perfil="", refazer=False, refazer_transcricao=False):
@@ -419,8 +452,13 @@ def editar_pasta(pasta, template, pasta_saida, pares, ffmpeg=None,
                          % (transcricao.get("tempo_de_transcricao_segundos") or 0)))
 
         try:
+            ajuste_de_cor = igualar_cor(video, template, ffmpeg)
+            if ajuste_de_cor:
+                registro["ajuste_de_cor"] = ajuste_de_cor
+                print("      cor: brilho %+.3f, saturacao x%.2f"
+                      % (ajuste_de_cor["brilho"], ajuste_de_cor["saturacao"]))
             gasto = editar_video(video, saida, template, headline, perfil,
-                                 palavras, ffmpeg)
+                                 palavras, ffmpeg, ajuste_de_cor)
         except (ErroDeEdicao, midia.ErroDeMidia,
                 enquadrar.ErroDeEnquadramento) as erro:
             print("      FALHOU: %s" % str(erro)[:300])

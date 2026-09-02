@@ -175,8 +175,14 @@ conferir_que("a fonte foi copiada e citada pelo nome puro",
              "fontfile=fonte_headline.ttf" in filtros[3])
 conferir_que("e o arquivo de fonte esta la",
              (TRABALHO / "fonte_headline.ttf").is_file())
-conferir_que("nenhum caminho com dois-pontos entrou na corrente",
-             not any("C:" in f or "c:" in f for f in filtros))
+import re as _re
+_CAMINHO_WINDOWS = _re.compile(r"[A-Za-z]:[/\\]")
+conferir_que("nenhum caminho de Windows entrou na corrente",
+             not any(_CAMINHO_WINDOWS.search(f) for f in filtros))
+conferir_que("e a checagem e de caminho mesmo, nao de qualquer 'letra:' — "
+             "`text_align=C:` e legitimo e nao pode derrubar isto",
+             _CAMINHO_WINDOWS.search("fontfile=C:/Windows/Fonts/arial.ttf")
+             and not _CAMINHO_WINDOWS.search("drawtext=text_align=C:fontsize=62"))
 
 conferir_que("o tamanho e a cor do template chegaram",
              "fontsize=62" in filtros[3] and "fontcolor=0x111111" in filtros[3])
@@ -352,6 +358,74 @@ try:
     conferir("e os usos seguintes reaproveitam", len(chamadas), 1)
 finally:
     editar.fala.carregar_modelo = original
+
+
+print("\n=== a tipografia da headline de duas linhas ===")
+
+filtros_t, _ = editar.montar_filtros(TEMPLATE, "Ninguem te contou isso e voce "
+                                     "precisa saber agora", "alguem", False,
+                                     False, TRABALHO)
+
+conferir_que("cada LINHA e centralizada, nao o bloco",
+             "text_align=C" in filtros_t[3])
+
+bruto = (TRABALHO / "headline.txt").read_bytes()
+conferir_que("o arquivo de texto NAO leva CR: o Windows traduzia \\n em \\r\\n "
+             "e o drawtext contava duas quebras, dobrando o vao",
+             b"\r" not in bruto)
+conferir_que("mas leva a quebra de linha", b"\n" in bruto)
+conferir("quebrado em exatamente duas linhas",
+         bruto.decode("utf-8").count("\n"), 1)
+conferir_que("e o @ tambem sai sem CR",
+             b"\r" not in (TRABALHO / "perfil.txt").read_bytes())
+
+
+print("\n=== igualar a cor ao nicho: so quando o template pede ===")
+
+conferir("template sem bloco `cor` nao mede nada",
+         editar.igualar_cor("qualquer.mp4", TEMPLATE), None)
+conferir("bloco `cor` com igualar=false tambem nao",
+         editar.igualar_cor("qualquer.mp4",
+                            dict(TEMPLATE, cor={"igualar": False})), None)
+
+lidos = []
+_original_ler = editar.midia.ler_imagem
+editar.midia.ler_imagem = lambda v, ff=None: (
+    lidos.append(v) or "lavfi.signalstats.YAVG=100.0\n"
+                       "lavfi.signalstats.SATAVG=15.0\n")
+try:
+    com_cor = dict(TEMPLATE, cor={"igualar": True, "brilho_alvo": 117.5,
+                                  "saturacao_alvo": 20.4})
+    ajuste = editar.igualar_cor("meu.mp4", com_cor)
+    conferir("mede o video de ENTRADA, nao usa numero fixo", lidos, ["meu.mp4"])
+    conferir("e o ajuste e a diferenca ate o alvo",
+             ajuste["brilho"], round((117.5 - 100.0) / 255.0, 4))
+    conferir("com a saturacao em razao", ajuste["saturacao"],
+             round(20.4 / 15.0, 3))
+
+    # O mesmo template, outro video: o ajuste TEM que ser diferente. E isto
+    # que separa "edicao dinamica" de "aplicar o mesmo eq em tudo".
+    editar.midia.ler_imagem = lambda v, ff=None: (
+        "lavfi.signalstats.YAVG=130.0\nlavfi.signalstats.SATAVG=25.0\n")
+    outro = editar.igualar_cor("outro.mp4", com_cor)
+    conferir_que("video mais claro recebe ajuste diferente do mais escuro",
+                 outro["brilho"] != ajuste["brilho"])
+    conferir_que("e o mais saturado recebe saturacao menor",
+                 outro["saturacao"] < ajuste["saturacao"])
+    conferir_que("um deles precisa clarear e o outro escurecer",
+                 ajuste["brilho"] > 0 > outro["brilho"])
+finally:
+    editar.midia.ler_imagem = _original_ler
+
+
+print("\n=== o template gerado pela medicao ===")
+
+gerado = editar.carregar_template("receitas")
+conferir_que("existe e diz que veio de medicao",
+             "medir --sugerir" in gerado.get("_leia", ""))
+conferir_que("manda igualar a cor", gerado["cor"]["igualar"] is True)
+conferir_que("com alvo numerico", gerado["cor"]["brilho_alvo"] > 0)
+conferir_que("e NAO tem alvo de audio", "audio" not in gerado)
 
 
 shutil.rmtree(TRABALHO, ignore_errors=True)

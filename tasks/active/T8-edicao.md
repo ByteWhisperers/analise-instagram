@@ -135,6 +135,39 @@ quadro claro. Padrão zero, então o `meme-branco` sai idêntico ao que sempre s
    *acompanha a fala* ao longo do vídeo inteiro é assistir.
 4. ✅ `saida/editados/relatorio.json`, por vídeo e em média.
 
+## Fase 2 — 02/09/2026: enquadramento e edição dirigida por medição
+
+Ele apontou dois problemas: o vídeo não estava enquadrado como queria e não
+havia como ajustar, e a edição deveria ser dinâmica, usando o banco. Notou
+também, lendo o repositório, que o ffmpeg é um decodificador e não só um
+editor — e essa observação virou o eixo do trabalho.
+
+**O enquadramento.** `src/enquadrar.py`, função pura: `encaixar` (o antigo, e
+ainda o padrão), `preencher`, `desfoque`, mais `zoom`, `deslocar_x` e
+`deslocar_y`. A conta é inteira em Python, não expressão de ffmpeg.
+
+**A medição.** `pipeline.py medir` lê os mp4 com ffmpeg e preenche
+`content_analyses`, que existia vazia. `src/formato.py` faz o parsing, também
+função pura. Custo zero.
+
+**O laço.** `medir --sugerir NOME` escreve um template a partir do medido, e
+`cor.igualar` faz o editor medir **cada vídeo dele** e aplicar a diferença até
+o alvo do nicho. As três cobaias receberam ajustes diferentes — é isso que
+separa edição dinâmica de aplicar o mesmo filtro em tudo.
+
+**O que a medição disse, e o que ela não disse.** Os 15 vídeos são 9:16 sem
+tarja, cortam 17,6 vezes por minuto na mediana (de 12,6 a 24,3) e têm brilho
+117,5. Mas o volume ficou dentro de 1,6 dB nos 4 perfis: isso é normalização
+do Instagram, não escolha de quem edita, e por isso **não** virou alvo.
+
+**Três defeitos achados renderizando, nenhum visível no código:** `zoom=0`
+virando 1.0 calado; o modo `desfoque` cortando a frente; e o `write_text` do
+Windows traduzindo `
+` em `
+`, o que dobrava o vão da headline de duas
+linhas. Junto veio `text_align=C`, sem o qual as linhas curtas ficavam
+encostadas à esquerda.
+
 ## O que ficou de fora, declarado
 
 - **`editar --lote`** (o caminho do banco) continua quebrado contra o SQLite

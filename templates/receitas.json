@@ -1,0 +1,79 @@
+{
+  "_leia": "Gerado por `pipeline.py medir --sugerir` a partir de 15 video(s) medido(s). O que a maquina NAO faz: cortar. Os medidos cortam 17.6 vezes por minuto (de 12.6 a 24.3) e duram 71.61s na mediana — isso e para voce gravar diferente, nao para o editor aplicar. O volume ficou de fora porque nos medidos ele variou so 1,6 dB no total, o que e a normalizacao do Instagram e nao escolha de quem edita.",
+  "nome": "receitas",
+  "canvas": {
+    "largura": 1080,
+    "altura": 1920,
+    "fundo": "#000000",
+    "fps": 30
+  },
+  "video": {
+    "_leia": "ajuste aceita: 'encaixar' (cabe inteiro, sobra fundo), 'preencher' (enche cortando as bordas) e 'desfoque' (cabe inteiro sobre o proprio video borrado). zoom 1.0 e o natural; 1.2 aproxima 20%. deslocar_y negativo sobe a imagem.",
+    "ajuste": "preencher",
+    "topo": 0,
+    "altura": 1920,
+    "margem_lateral": 0,
+    "zoom": 1.0,
+    "deslocar_x": 0,
+    "deslocar_y": 0,
+    "desfoque_sigma": 22,
+    "desfoque_escurecer": 0.12
+  },
+  "headline": {
+    "_leia": "Fica sobre o fundo borrado, entao precisa de contorno.",
+    "mostrar": true,
+    "fonte": "arialbd.ttf",
+    "tamanho": 62,
+    "cor": "#FFFFFF",
+    "cor_contorno": "#000000",
+    "contorno": 5,
+    "topo": 120,
+    "largura_em_caracteres": 26,
+    "espaco_entre_linhas": 12
+  },
+  "perfil": {
+    "mostrar": true,
+    "prefixo": "@",
+    "fonte": "arial.ttf",
+    "tamanho": 36,
+    "cor": "#FFFFFF",
+    "cor_contorno": "#000000",
+    "contorno": 3,
+    "topo": 1800
+  },
+  "logo": {
+    "_leia": "Caminho de um PNG. Deixe null para nao usar.",
+    "arquivo": null,
+    "altura": 90,
+    "topo": 40,
+    "posicao": "centro"
+  },
+  "legenda": {
+    "_leia": "posicao_y fica dentro da area do video, na parte de baixo, onde nao tapa o assunto.",
+    "mostrar": true,
+    "fonte": "Arial",
+    "tamanho": 74,
+    "negrito": true,
+    "cor": "#FFFFFF",
+    "cor_destaque": "#FFE100",
+    "cor_contorno": "#000000",
+    "contorno": 6,
+    "sombra": 0,
+    "destacar_palavra": true,
+    "palavras_por_grupo": 3,
+    "pausa_que_quebra": 0.8,
+    "posicao_y": 1400,
+    "margem_lateral": 80
+  },
+  "saida": {
+    "preset": "veryfast",
+    "qualidade": 23,
+    "audio_kbps": 128
+  },
+  "cor": {
+    "_leia": "Alvo medido no nicho. O editor mede o SEU video e calcula a diferenca sozinho — estes numeros sao o destino, nao o ajuste.",
+    "igualar": true,
+    "brilho_alvo": 117.5,
+    "saturacao_alvo": 20.4
+  }
+}

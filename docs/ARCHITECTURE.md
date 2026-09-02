@@ -31,13 +31,17 @@ termo em português
    ├─ 4. TRANSCREVER mp4 → texto com tempo por palavra          (CPU)
    │                 transcripts · transcript_segments · transcript_words
    │
+   ├─ 4b. MEDIR      mp4 → COMO o vídeo é construído             (grátis)
+   │                 content_analyses  ·  proporção, corte, luz, volume
+   │
    └─ 5. ANALISAR    tudo → score, relatório
                      content_analyses · saida/
 ```
 
-**As etapas 0 a 3 estão no PostgreSQL. As etapas 4 e 5 ainda falam com o SQLite
-antigo** — é a dívida da T11, e é a única razão de `src/banco.py` e
-`src/consultas.py` continuarem existindo.
+**As etapas 0 a 3 e a 4b estão no PostgreSQL. As etapas 4 e 5 ainda falam com o
+SQLite antigo** — é a dívida da T11, e é a única razão de `src/banco.py` e
+`src/consultas.py` continuarem existindo. A 4b nasceu já no PostgreSQL e não
+depende da T11: lê o mp4 do disco e grava direto pelos `repos/`.
 
 ### A esteira paralela: edição de material próprio
 
@@ -75,7 +79,7 @@ sem banco e sem gastar um centavo.
 | Camada | Quem mora ali | A regra |
 |---|---|---|
 | **Orquestração** | `pipeline.py` | decide a ordem, imprime, gasta dinheiro. **Nenhuma conta e nenhum SQL.** |
-| **Decisão** | `mapeador`, `grafo`, `assinatura`, `lexico`, `idioma`, `metricas`, `desempenho`, `legenda`, `roteiro` | **só função pura.** Entra dado, sai dado. Sem rede, sem banco, sem relógio (o `agora` é sempre parâmetro) |
+| **Decisão** | `mapeador`, `grafo`, `assinatura`, `lexico`, `idioma`, `metricas`, `desempenho`, `legenda`, `roteiro`, `enquadrar`, `formato` | **só função pura.** Entra dado, sai dado. Sem rede, sem banco, sem relógio (o `agora` é sempre parâmetro) |
 | **Acesso a dados** | `repos/` — onze módulos, um por agregado | **a única camada que escreve SQL.** Também é a fronteira de idioma: o Python fala português, o banco fala inglês |
 | **Acesso ao mundo** | `coletor`, `downloader`, `storage`, `midia`, `db`, `fala` | tudo que fala com fora. Interface abstrata + implementação, para o teste poder usar dublê |
 
@@ -329,9 +333,22 @@ material próprio não espera por isso** — ela não passa por banco.
 
 **O template `meme-branco` supõe vídeo deitado ou quadrado.** Com fonte já em
 9:16, ele reduz o vídeo a 540×960 num canvas de 1080×1920 e metade do quadro
-vira branco — medido em 01/09/2026. Para vídeo de celular existe o
-`vertical.json`. **A escolha é manual:** o sistema não olha a proporção da
-entrada para sugerir o template certo.
+vira branco — medido em 01/09/2026. Desde 02/09 há três modos de enquadramento
+(`encaixar`, `preencher`, `desfoque`) mais zoom e deslocamento. **A escolha
+continua manual:** o sistema não olha a proporção da entrada para trocar de
+template sozinho — só o `medir --sugerir` deriva um, e a partir do nicho, não
+do arquivo.
+
+**O que o banco sabe sobre vídeo cabe em cinco números.** Desde 02/09,
+`content_analyses` guarda proporção, ritmo de corte, brilho, saturação e
+volume, medidos com ffmpeg. É pouco perto do que existe sobre linguagem (27 mil
+observações de termos), e é tudo que há: não há reconhecimento de objeto, de
+rosto, de texto na tela nem de música.
+
+**O volume medido descreve o Instagram, não quem edita.** Nos 15 vídeos de 4
+perfis a variação total foi de 1,6 dB, com os picos dentro de 0,9 dB. Isso é
+normalização de sonoridade da plataforma. `formato.sugerir()` não deriva alvo
+de áudio por causa disso, e o template gerado diz o porquê.
 
 **Visualizações podem não vir.** O Instagram vem removendo a contagem pública. O
 código já cai para curtidas e comentários por seguidor, e diz qual base usou.

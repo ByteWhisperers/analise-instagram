@@ -35,6 +35,7 @@ o escopo cresceu.
 | Score | `pipeline.py ranking --nicho X` | quem performa acima do grupo |
 | Conferência | `pipeline.py schema "<nicho>"` | item cru do Actor, por centavos |
 | Faxina | `pipeline.py limpar` | o que dá para liberar. Só apaga com `--aplicar` |
+| **Medição** | `pipeline.py medir` | lê os mp4 com ffmpeg → `content_analyses`. Grátis. `--sugerir NOME` escreve `templates/NOME.json` |
 | Transcrição | `src/transcrever.py` | `transcricao.json` por post |
 | Análise | `src/analisar.py` | `dados/analises/<perfil>.json` |
 | Relatório | `src/relatorio.py` | `saida/relatorio.html` |
@@ -65,8 +66,12 @@ Módulos de apoio, sem linha de comando própria:
 | `src/legenda.py` | palavras com tempo → `.ass` com karaokê. Só função pura |
 | `src/fala.py` | vídeo → palavras com tempo (Whisper local), com cache em `<video>.palavras.json` |
 | `src/roteiro.py` | a lista de headlines do lote: `nome.mp4 \| texto`. Só função pura |
+| `src/enquadrar.py` | onde o vídeo fica no quadro: `encaixar`, `preencher`, `desfoque`, zoom e deslocamento. Só função pura |
+| `src/formato.py` | texto cru do ffmpeg → como o vídeo é construído. Só função pura |
 | `templates/padrao.json` | `meme-branco` — para vídeo **deitado ou quadrado** |
 | `templates/vertical.json` | `vertical-cheio` — para vídeo **já gravado em pé** (celular) |
+| `templates/desfoque.json` | vídeo inteiro sobre cópia borrada de si mesmo. Serve qualquer proporção |
+| `templates/receitas.json` | **gerado por medição** em 02/09, a partir de 15 vídeos de 4 perfis |
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
 | `tests/test_idioma.py` | 26 conferências do detector de idioma |
 | `tests/test_lexico.py` | 41 conferências do colhedor de léxico |
@@ -83,10 +88,12 @@ Módulos de apoio, sem linha de comando própria:
 | `tests/test_editar.py` | 83 conferências da corrente de filtros, da varredura e do relatório |
 | `tests/test_roteiro.py` | 49 conferências do pareamento vídeo↔headline |
 | `tests/test_fala.py` | 40 conferências do cache de transcrição, com dublê no Whisper |
+| `tests/test_enquadrar.py` | 91 conferências da geometria: três modos, zoom, deslocamento, o preso nos limites |
+| `tests/test_formato.py` | 105 conferências do parsing da saída do ffmpeg e da faixa do conjunto |
 | `tests/test_repos_*.py` | 312 conferências contra um PostgreSQL de verdade |
 
-**1.263 conferências, todas passando** (contadas na saída real, não
-estimadas). Rode as vinte antes de dar qualquer coisa por pronta. As
+**1.477 conferências, todas passando** (contadas na saída real, não
+estimadas). Rode as vinte e duas antes de dar qualquer coisa por pronta. As
 `test_repos_*` exigem o PostgreSQL de pé; se ele não responder, elas avisam e
 saem sem falhar.
 
@@ -149,7 +156,17 @@ desfazer, e isso travava faxina de código.
   `dados/gravacoes/` é ignorada pelo git: o repositório é público.
 - **O template certo depende da proporção do vídeo, e a escolha é sua.** O
   `meme-branco` foi feito para vídeo deitado ou quadrado; com fonte já em 9:16
-  ele encolhe o vídeo à metade do quadro. Para celular, use o `vertical`.
+  ele encolhe o vídeo à metade do quadro. Para celular, use `desfoque` ou
+  `vertical`. Os botões são `video.ajuste`, `zoom`, `deslocar_x`, `deslocar_y`.
+- **O ffmpeg lê vídeo, não só escreve.** `pipeline.py medir` é a única fonte de
+  informação que o projeto tem sobre **construção** de vídeo — o resto do banco
+  é linguagem. Ele preenche `content_analyses`, que existia vazia.
+- **O volume medido é da plataforma, não de quem edita.** Nos 15 vídeos de 4
+  perfis diferentes ele variou 1,6 dB no total: isso é a normalização do
+  Instagram. Não derivar alvo de áudio dali — seria lavar artefato de
+  plataforma como padrão do nicho.
+- **O editor aplica moldura; ele não remonta o vídeo.** O ritmo de corte é
+  medido e reportado para você gravar diferente, nunca aplicado sozinho.
 
 ## Máquina
 

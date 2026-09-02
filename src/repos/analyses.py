@@ -111,6 +111,25 @@ def sem_analise(conexao, modelo=DETERMINISTICO, limite=200):
     return [{"content_id": l[0], "codigo": l[1]} for l in cursor.fetchall()]
 
 
+def todas_do_modelo(conexao, modelo, versao=None, limite=500):
+    """Todas as análises deste produtor. É o que alimenta a faixa do conjunto.
+
+    Traz o JSONB inteiro de propósito: quem agrega é função pura em Python, e
+    espalhar a agregação em SQL tiraria dela o teste sem banco.
+    """
+    sql = ("SELECT content_id, analysis_version, analysis FROM content_analyses "
+           "WHERE model = %s")
+    parametros = [modelo]
+    if versao:
+        sql += " AND analysis_version = %s"
+        parametros.append(versao)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    parametros.append(limite)
+
+    return [{"conteudo_id": l[0], "versao": l[1], "analise": l[2]}
+            for l in conexao.execute(sql, parametros)]
+
+
 def comparar_modelos(conexao, conteudo_id):
     """As análises do mesmo vídeo, por produtor.
 

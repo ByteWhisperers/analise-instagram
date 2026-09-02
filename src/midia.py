@@ -43,6 +43,97 @@ def achar_ffmpeg():
     )
 
 
+# ------------------------------------------------------------------ medir
+#
+# O ffmpeg nao serve so para escrever video: ele LE. Os leitores abaixo
+# devolvem texto cru, sem interpretar nada — quem interpreta e `formato.py`,
+# que e funcao pura e da para conferir sem ter mp4 na maquina.
+#
+# Sao DUAS passadas por video, nao quatro: a deteccao de cena precisa da taxa
+# de quadros cheia, e o resto cabe junto numa passada a 1 quadro por segundo.
+
+
+LIMIAR_DE_CENA = 0.3  # acima disto, o quadro mudou o bastante para ser corte
+
+
+def _rodar(comando, timeout=900):
+    """Roda o ffmpeg e devolve (stdout, stderr). Nao levanta por codigo de saida.
+
+    O `volumedetect` e o `cropdetect` escrevem no stderr e ainda assim terminam
+    bem; tratar stderr como falha perderia justamente a medida.
+    """
+    try:
+        resultado = subprocess.run(comando, capture_output=True, text=True,
+                                   timeout=timeout, errors="replace")
+    except subprocess.TimeoutExpired:
+        raise ErroDeMidia("O ffmpeg passou de %ds medindo. Arquivo grande "
+                          "demais ou travado." % timeout)
+    return resultado.stdout or "", resultado.stderr or ""
+
+
+def ler_cortes(video, ffmpeg=None, limiar=LIMIAR_DE_CENA):
+    """Os segundos em que a cena muda. Passada de taxa cheia.
+
+    `scene` compara cada quadro com o anterior e devolve 0 a 1. Acima do
+    limiar, houve corte. Nao e perfeito — movimento de camera forte tambem
+    pontua — mas e a medida que existe sem modelo nenhum, e serve para
+    comparar videos entre si, que e o que interessa.
+    """
+    executavel = ffmpeg or achar_ffmpeg()
+    saida, erro = _rodar([
+        executavel, "-hide_banner", "-nostats",
+        "-i", str(video),
+        "-vf", "select='gt(scene,%s)',metadata=print:file=-" % limiar,
+        "-an", "-f", "null", "-",
+    ])
+    return saida + erro
+
+
+def ler_imagem(video, ffmpeg=None, por_segundo=1):
+    """Brilho, saturacao e tarjas. Passada leve, a 1 quadro por segundo.
+
+    Tres medidas na mesma corrente porque as tres querem os mesmos quadros:
+    decodificar o video de novo para cada uma seria pagar tres vezes.
+    """
+    executavel = ffmpeg or achar_ffmpeg()
+    saida, erro = _rodar([
+        executavel, "-hide_banner", "-nostats",
+        "-i", str(video),
+        "-vf", "fps=%d,cropdetect,signalstats,metadata=print:file=-" % por_segundo,
+        "-an", "-f", "null", "-",
+    ])
+    return saida + erro
+
+
+def ler_audio(video, ffmpeg=None):
+    """Volume medio e de pico, em dB. Vazio quando o video e mudo."""
+    executavel = ffmpeg or achar_ffmpeg()
+    if not tem_audio(video, executavel):
+        return ""
+    saida, erro = _rodar([
+        executavel, "-hide_banner", "-nostats",
+        "-i", str(video),
+        "-af", "volumedetect", "-vn", "-f", "null", "-",
+    ])
+    return saida + erro
+
+
+def ler_ficha(video, ffmpeg=None):
+    """Largura, altura, fps e duracao, do ffprobe. Uma linha de texto."""
+    probe = _ffprobe(ffmpeg)
+    if not probe:
+        raise ErroDeMidia("Nao achei o ffprobe ao lado do ffmpeg.")
+
+    resultado = subprocess.run([
+        str(probe), "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,r_frame_rate:format=duration",
+        "-of", "default=nw=1",
+        str(video),
+    ], capture_output=True, text=True, errors="replace")
+    return resultado.stdout or ""
+
+
 def extrair_audio(video, destino_wav, ffmpeg=None):
     """Video -> WAV 16 kHz mono.
 

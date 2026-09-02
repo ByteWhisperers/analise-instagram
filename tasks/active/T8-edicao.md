@@ -163,10 +163,30 @@ do Instagram, não escolha de quem edita, e por isso **não** virou alvo.
 **Três defeitos achados renderizando, nenhum visível no código:** `zoom=0`
 virando 1.0 calado; o modo `desfoque` cortando a frente; e o `write_text` do
 Windows traduzindo `
-` em `
+` em `
+
 `, o que dobrava o vão da headline de duas
 linhas. Junto veio `text_align=C`, sem o qual as linhas curtas ficavam
 encostadas à esquerda.
+
+## Limite achado em 02/09, ainda sem conserto
+
+**A pasta de saída é uma só, e toda rodada reescreve a anterior.**
+`saida/editados/` é fixo no código (`config.SAIDA / "editados"`), e o modo
+`--pasta` não aceita `--saida`. Consequência real, e não hipotética: renderizei
+as cobaias em `desfoque`, depois rodei com o template `receitas` (que usa
+`preencher`), e as versões em desfoque foram apagadas — **eu entreguei as
+erradas dizendo que eram o resultado, e foi ele quem percebeu.**
+
+Isso vai voltar a morder assim que ele quiser comparar dois estilos do mesmo
+material, que é exatamente o uso pretendido de ter mais de um template.
+
+Dois consertos possíveis, nenhum grande:
+1. `--saida PASTA` no modo pasta;
+2. a saída ir sozinha para `saida/editados/<nome-do-template>/`.
+
+O 2 é melhor: não exige lembrar de passar flag, e o nome do template já está no
+`relatorio.json`. **Próxima coisa a fazer nesta task.**
 
 ## O que ficou de fora, declarado
 

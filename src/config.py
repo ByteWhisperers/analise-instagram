@@ -15,6 +15,10 @@ DADOS = RAIZ / "dados"
 BUSCAS = DADOS / "buscas"
 PERFIS = DADOS / "perfis"
 ANALISES = DADOS / "analises"
+# Video gravado pelo usuario, entrada do editor em lote (T8). Fica sob `dados/`
+# de proposito: e a pasta que o .gitignore ja cobre inteira, e material proprio
+# nao pode vazar para o repositorio publico.
+GRAVACOES = DADOS / "gravacoes"
 SAIDA = RAIZ / "saida"
 SESSOES = RAIZ / ".sessoes"
 

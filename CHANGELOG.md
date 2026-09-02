@@ -4,6 +4,55 @@ Formato: o que mudou no sistema, do mais recente para o mais antigo.
 
 ## [Não lançado]
 
+### 2026-09-01 — o editor não estava por construir: estava construído e desligado
+
+Começou o pipeline de edição em massa (T8). O levantamento mudou o trabalho:
+`editar.py`, `legenda.py` e `templates/padrao.json` já existiam e a corrente de
+filtros do ffmpeg estava correta. O que impedia de rodar era outra coisa —
+`editar.py` falava com o SQLite que sumiu na migração, não havia **nenhuma**
+transcrição no banco, `legenda.py` não tinha um único teste, e **nenhum vídeo
+jamais tinha sido renderizado**: `saida/` estava vazia.
+
+**O modo pasta, que é o novo caminho principal.** `editar.py --pasta` come uma
+pasta de vídeos dele (`dados/gravacoes/`) e um `roteiro.txt` com uma headline
+por linha. **Não toca no PostgreSQL** — vídeo gravado por ele não tem
+`content_id`, e `media_assets`/`processing_jobs` são chaveadas por post do
+Instagram. Forçar um vínculo ali torceria o schema. Consequência: a T8 deixou
+de depender da T11.
+
+Novos: `src/fala.py` (vídeo → palavras com tempo, com cache em
+`<video>.palavras.json`) e `src/roteiro.py` (a lista de headlines, função
+pura). `transcrever.py` passou a importar o Whisper de `fala.py` em vez de ter
+cópia — **encolhe** a superfície da T11 em vez de aumentá-la.
+
+**Medido, não estimado** — três Reels de 57,9s nesta máquina:
+
+| Etapa | Medida |
+|---|---|
+| Transcrição, modelo `small` | 0,9× a duração (49,8s para 57,9s de áudio) |
+| Edição sem legenda | 50,9s por vídeo |
+| Edição com legenda | 68,8s por vídeo |
+| Segunda rodada | transcrição vem do cache, zero Whisper |
+
+Custo em dinheiro: **US$ 0,00**. Whisper e ffmpeg são locais.
+
+**O que só renderizar mostrou.** O `meme-branco` foi desenhado para vídeo
+deitado ou quadrado. Com fonte já em 9:16 — o que sai de celular — o vídeo
+encolhe para 540×960 num canvas de 1080×1920 e metade do quadro vira branco.
+Daí o `templates/vertical.json`, em que o vídeo preenche a tela e o texto vai
+por cima. Isso exigiu a única mudança no renderizador: `borderw` opcional no
+`drawtext`, porque texto sobre imagem sem contorno some no primeiro quadro
+claro. Padrão zero — o `meme-branco` sai idêntico ao que sempre saiu.
+
+**196 conferências novas**, em quatro arquivos que não existiam:
+`test_legenda.py` (64), `test_editar.py` (83), `test_roteiro.py` (49),
+`test_fala.py` (40). Total do projeto: **1.263, todas passando**. A conversão
+de cor do `.ass` foi a que mais valeu: o CSS é RGB e o `.ass` é AABBGGRR, e
+trocar a ordem não quebra nada — só sai a cor errada, calada.
+
+**Pendente e é dele:** assistir aos vídeos. O portão da T8 diz que não existe
+"ficou bom" por leitura de código, e extrair quadro não substitui assistir.
+
 ### 2026-08-31 (2) — a prova paga achou três defeitos, e os três eram meus
 
 Duas rodadas reais (`tragédias` e `grau de moto`), **US$ 0,0513 no total**. O

@@ -1,0 +1,17 @@
+# ROTEIRO — o texto que aparece em cima de cada video.
+#
+# Copie este arquivo para `roteiro.txt` nesta mesma pasta e edite.
+# Uma linha por video:   nome-do-arquivo | texto da headline
+#
+# Regras, todas conferidas em tests/test_roteiro.py:
+#
+#   - linha comecando com # e comentario, e linha em branco e ignorada
+#   - a extensao e opcional: "abertura" acha "abertura.mp4"
+#   - maiuscula e minuscula nao importam
+#   - so o PRIMEIRO | separa, entao a headline pode conter |
+#   - repetir o mesmo arquivo e reclamado, e a primeira linha e a que vale
+#   - video que nao estiver aqui e editado sem headline (ou com --headline)
+#   - nome digitado errado e reclamado ANTES de comecar a editar
+
+abertura.mp4      | Ninguem te contou isso
+receita-bolo      | O segredo esta no ponto da calda

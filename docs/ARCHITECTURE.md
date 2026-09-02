@@ -31,13 +31,38 @@ termo em português
    ├─ 4. TRANSCREVER mp4 → texto com tempo por palavra          (CPU)
    │                 transcripts · transcript_segments · transcript_words
    │
-   └─ 5. ANALISAR    tudo → score, relatório, vídeo editado
+   └─ 5. ANALISAR    tudo → score, relatório
                      content_analyses · saida/
 ```
 
 **As etapas 0 a 3 estão no PostgreSQL. As etapas 4 e 5 ainda falam com o SQLite
 antigo** — é a dívida da T11, e é a única razão de `src/banco.py` e
 `src/consultas.py` continuarem existindo.
+
+### A esteira paralela: edição de material próprio
+
+O editor tem um segundo caminho, que **não passa por banco nenhum** — nem
+PostgreSQL, nem SQLite:
+
+```
+dados/gravacoes/*.mp4  +  roteiro.txt
+   │
+   ├─ fala.py      mp4 → palavras com tempo    (Whisper local, CPU)
+   │               cache em <video>.palavras.json — retomável
+   │
+   ├─ roteiro.py   arquivo → {video: headline}  (função pura)
+   │
+   └─ editar.py    template + palavras → mp4 em 9:16
+                   saida/editados/ · relatorio.json
+```
+
+**Por que fora do banco.** `media_assets` e `processing_jobs` são chaveadas por
+`content_id` — um post do Instagram. Vídeo gravado pelo usuário não tem um, e
+inventar vínculo torceria o schema para caber um caso que não é o dele. O
+registro de tempo por vídeo, que a T8 exige, mora em `relatorio.json`.
+
+O caminho `editar --lote`, que lê do banco, **continua quebrado** contra o
+SQLite que sumiu. Marcado no código; conserta a T11.
 
 ---
 
@@ -50,9 +75,9 @@ sem banco e sem gastar um centavo.
 | Camada | Quem mora ali | A regra |
 |---|---|---|
 | **Orquestração** | `pipeline.py` | decide a ordem, imprime, gasta dinheiro. **Nenhuma conta e nenhum SQL.** |
-| **Decisão** | `mapeador`, `grafo`, `assinatura`, `lexico`, `idioma`, `metricas`, `desempenho` | **só função pura.** Entra dado, sai dado. Sem rede, sem banco, sem relógio (o `agora` é sempre parâmetro) |
+| **Decisão** | `mapeador`, `grafo`, `assinatura`, `lexico`, `idioma`, `metricas`, `desempenho`, `legenda`, `roteiro` | **só função pura.** Entra dado, sai dado. Sem rede, sem banco, sem relógio (o `agora` é sempre parâmetro) |
 | **Acesso a dados** | `repos/` — onze módulos, um por agregado | **a única camada que escreve SQL.** Também é a fronteira de idioma: o Python fala português, o banco fala inglês |
-| **Acesso ao mundo** | `coletor`, `downloader`, `storage`, `midia`, `db` | tudo que fala com fora. Interface abstrata + implementação, para o teste poder usar dublê |
+| **Acesso ao mundo** | `coletor`, `downloader`, `storage`, `midia`, `db`, `fala` | tudo que fala com fora. Interface abstrata + implementação, para o teste poder usar dublê |
 
 Duas fronteiras que valem a pena entender:
 
@@ -296,10 +321,17 @@ de copiar, de fazer backup e de consultar.
 
 ## Limites conhecidos, declarados
 
-**A Fase 3 ainda fala SQLite.** `transcrever.py`, `analisar.py` e `editar.py`
-importam `banco.py`. Enquanto isso não for portado (T11), o projeto tem dois
-bancos e 16 vídeos reais esperando. Cuidado registrado: a busca mudou de FTS5
-para `tsvector` com stemming português.
+**A Fase 3 ainda fala SQLite.** `transcrever.py`, `analisar.py` e o caminho
+`editar --lote` importam `banco.py`. Enquanto isso não for portado (T11), o
+projeto tem dois bancos e 16 vídeos reais esperando. Cuidado registrado: a
+busca mudou de FTS5 para `tsvector` com stemming português. **A edição de
+material próprio não espera por isso** — ela não passa por banco.
+
+**O template `meme-branco` supõe vídeo deitado ou quadrado.** Com fonte já em
+9:16, ele reduz o vídeo a 540×960 num canvas de 1080×1920 e metade do quadro
+vira branco — medido em 01/09/2026. Para vídeo de celular existe o
+`vertical.json`. **A escolha é manual:** o sistema não olha a proporção da
+entrada para sugerir o template certo.
 
 **Visualizações podem não vir.** O Instagram vem removendo a contagem pública. O
 código já cai para curtidas e comentários por seguidor, e diz qual base usou.

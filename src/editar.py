@@ -6,10 +6,18 @@ centro, headline em cima, @ do perfil, legenda queimada no meio.
 Feito para volume: um comando edita 50 videos seguidos. O visual mora em
 `templates/*.json`, nunca no codigo.
 
+Tres modos, com publicos diferentes:
+
+    --pasta   material proprio, uma pasta de mp4 + um roteiro de headlines.
+              **Nao toca no banco.** E o caminho do molde, e o modo principal.
+    --video   um arquivo avulso, para conferir template rapido.
+    --lote    os videos coletados, lendo do banco. **Quebrado desde a migracao
+              para o PostgreSQL** — ver a nota em `editar_em_lote`.
+
 Uso:
-    python src/editar.py --lote --perfis algumperfil --limite 50
+    python src/editar.py --pasta
+    python src/editar.py --pasta dados/gravacoes --template meu-estilo
     python src/editar.py --video entrada.mp4 --headline "Olha isso"
-    python src/editar.py --lote --template meu-estilo
 """
 
 import argparse
@@ -20,14 +28,17 @@ import sys
 import tempfile
 import textwrap
 import time
+from datetime import datetime
 from pathlib import Path
 
 import console
 import banco
 import config
 import consultas
+import fala
 import legenda as modulo_legenda
 import midia
+import roteiro as modulo_roteiro
 
 PASTA_DE_FONTES = Path("C:/Windows/Fonts")
 
@@ -107,6 +118,17 @@ def _bloco_de_texto(rotulo, conteudo, estilo, pasta_trabalho, entrada, saida):
         "y=%d" % estilo.get("topo", 100),
         "line_spacing=%d" % estilo.get("espaco_entre_linhas", 10),
     ]
+
+    # Contorno. So entra quando o template pede, e o padrao e zero — assim o
+    # `meme-branco`, que tem texto preto sobre fundo branco, continua saindo
+    # identico ao que sempre saiu. Existe para o caso oposto: quando o video
+    # ocupa a tela toda, o texto cai POR CIMA da imagem e sem contorno some no
+    # primeiro quadro claro. Mesmas chaves que o bloco `legenda` ja usa.
+    contorno = estilo.get("contorno", 0)
+    if contorno:
+        partes.append("borderw=%d" % contorno)
+        partes.append("bordercolor=%s"
+                      % cor_para_ffmpeg(estilo.get("cor_contorno", "#000000")))
 
     fonte = achar_fonte(estilo.get("fonte"))
     if fonte:
@@ -244,7 +266,13 @@ def _palavras_do_banco(conexao, post_id):
 
 def editar_em_lote(conexao, template, alvos, pasta_saida, headline_padrao,
                    ffmpeg, refazer=False):
-    """Edita a fila inteira. Um video que falha nao derruba os outros."""
+    """Edita a fila inteira. Um video que falha nao derruba os outros.
+
+    ATENCAO — DIVIDA DA T11. Este caminho fala com o SQLite (`banco`,
+    `consultas`), e `dados/analise.db` deixou de existir na migracao para o
+    PostgreSQL. **Nao roda.** Ficou de pe, e nao foi apagado, porque a porta da
+    Fase 3 e trabalho da T11 e nao deste. Quem edita hoje e `editar_pasta`.
+    """
     pasta_saida.mkdir(parents=True, exist_ok=True)
     feitos, pulados, falhados = 0, 0, 0
     tempo_total = 0.0
@@ -288,6 +316,153 @@ def editar_em_lote(conexao, template, alvos, pasta_saida, headline_padrao,
     return feitos, pulados, falhados, tempo_total
 
 
+# ------------------------------------------------------------ modo pasta
+
+
+NOME_PADRAO_DO_ROTEIRO = "roteiro.txt"
+
+
+def listar_videos(pasta):
+    """Os videos da pasta, em ordem. Nao entra em subpasta de proposito.
+
+    Uma pasta so, plana, e o que uma pessoa consegue conferir antes de mandar
+    editar 50 arquivos. Recursao aqui so serviria para editar por engano.
+    """
+    pasta = Path(pasta)
+    if not pasta.is_dir():
+        raise ErroDeEdicao(
+            "A pasta '%s' nao existe.\n"
+            "Crie ela e jogue seus videos dentro." % pasta)
+
+    return sorted((arquivo for arquivo in pasta.iterdir()
+                   if arquivo.is_file() and modulo_roteiro.e_video(arquivo.name)),
+                  key=lambda caminho: caminho.name.lower())
+
+
+def ler_roteiro(pasta, caminho=None):
+    """Le o arquivo de headlines. Sem roteiro nao e erro — e lote sem headline."""
+    arquivo = Path(caminho) if caminho else Path(pasta) / NOME_PADRAO_DO_ROTEIRO
+    if not arquivo.is_file():
+        if caminho:
+            raise ErroDeEdicao("Roteiro '%s' nao encontrado." % arquivo)
+        return [], []
+    return modulo_roteiro.ler(arquivo.read_text(encoding="utf-8"))
+
+
+def _modelo_sob_demanda(nome, tipo_computacao):
+    """So carrega o Whisper se algum video realmente precisar dele.
+
+    Carregar o modelo custa alguns segundos e ~1 GB de memoria. Numa pasta em
+    que tudo ja esta no cache, esse preco nao deve ser pago.
+    """
+    guardado = {}
+
+    def obter():
+        if "modelo" not in guardado:
+            guardado["modelo"] = fala.carregar_modelo(nome, tipo_computacao)
+        return guardado["modelo"]
+
+    return obter
+
+
+def editar_pasta(pasta, template, pasta_saida, pares, ffmpeg=None,
+                 obter_modelo=None, nome_modelo="small", idioma="pt",
+                 perfil="", refazer=False, refazer_transcricao=False):
+    """Edita a pasta inteira. Devolve a lista de resultados, um por video.
+
+    Um video que falha **nao derruba o lote** — em 50 arquivos, um mp4 truncado
+    nao pode custar as outras 49 edicoes. A falha entra no relatorio com o
+    motivo.
+
+    Sem `obter_modelo`, sai sem legenda: e o modo de conferir o template rapido,
+    sem pagar transcricao.
+    """
+    pasta_saida.mkdir(parents=True, exist_ok=True)
+    resultados = []
+
+    videos = listar_videos(pasta)
+    for indice, video in enumerate(videos, start=1):
+        headline = pares.get(video.name, "")
+        registro = {"arquivo": video.name, "headline": headline}
+        print("(%d/%d) %s" % (indice, len(videos), video.name))
+
+        saida = pasta_saida / ("%s.mp4" % video.stem)
+        if saida.exists() and not refazer:
+            print("      ja editado - pulando (use --refazer para refazer)")
+            registro["situacao"] = "pulado"
+            resultados.append(registro)
+            continue
+
+        palavras = []
+        if obter_modelo:
+            try:
+                transcricao, do_cache = fala.palavras_de_video(
+                    video, obter_modelo, nome_modelo, idioma, ffmpeg,
+                    refazer=refazer_transcricao)
+            except midia.ErroDeMidia as erro:
+                print("      sem audio aproveitavel: %s" % str(erro)[:200])
+                transcricao, do_cache = None, False
+
+            if transcricao is None:
+                print("      video sem trilha de audio - segue sem legenda")
+            else:
+                palavras = transcricao.get("palavras") or []
+                registro["transcricao_do_cache"] = do_cache
+                registro["segundos_de_audio"] = transcricao.get(
+                    "duracao_audio_segundos")
+                print("      %d palavras %s"
+                      % (len(palavras),
+                         "(do cache)" if do_cache else
+                         "em %.0fs de transcricao"
+                         % (transcricao.get("tempo_de_transcricao_segundos") or 0)))
+
+        try:
+            gasto = editar_video(video, saida, template, headline, perfil,
+                                 palavras, ffmpeg)
+        except (ErroDeEdicao, midia.ErroDeMidia) as erro:
+            print("      FALHOU: %s" % str(erro)[:300])
+            registro["situacao"] = "falhou"
+            registro["erro"] = str(erro)[:500]
+            resultados.append(registro)
+            continue
+
+        registro["situacao"] = "editado"
+        registro["saida"] = str(saida)
+        registro["segundos_de_edicao"] = round(gasto, 1)
+        registro["palavras_na_legenda"] = len(palavras)
+        resultados.append(registro)
+        print("      pronto em %.1fs -> %s" % (gasto, saida.name))
+
+    return resultados
+
+
+def gravar_relatorio(resultados, template, pasta_saida):
+    """O tempo por video, em arquivo. E o criterio 4 da T8.
+
+    Vai para um JSON e nao para o banco porque video proprio nao tem
+    `content_id` — as tabelas `media_assets` e `processing_jobs` sao chaveadas
+    por post do Instagram, e forcar um vinculo ali torceria o schema.
+    """
+    editados = [r for r in resultados if r.get("situacao") == "editado"]
+    tempo = sum(r.get("segundos_de_edicao") or 0 for r in editados)
+
+    relatorio = {
+        "template": template.get("nome"),
+        "feito_em": datetime.now().isoformat(timespec="seconds"),
+        "editados": len(editados),
+        "pulados": len([r for r in resultados if r.get("situacao") == "pulado"]),
+        "falhados": len([r for r in resultados if r.get("situacao") == "falhou"]),
+        "segundos_totais": round(tempo, 1),
+        "segundos_por_video": round(tempo / len(editados), 1) if editados else None,
+        "videos": resultados,
+    }
+
+    destino = pasta_saida / "relatorio.json"
+    with destino.open("w", encoding="utf-8") as aberto:
+        json.dump(relatorio, aberto, ensure_ascii=False, indent=2)
+    return relatorio, destino
+
+
 def ler_argumentos():
     parser = argparse.ArgumentParser(
         description="Edita video no formato de pagina de meme, em lote.")
@@ -299,17 +474,101 @@ def ler_argumentos():
     parser.add_argument("--saida", help="Arquivo de saida (com --video).")
     parser.add_argument("--perfil", default="", help="O @ que aparece no video.")
 
+    parser.add_argument("--pasta", nargs="?", const=str(config.GRAVACOES),
+                        help="Editar uma pasta de videos seus. Sem valor, usa "
+                             "dados/gravacoes.")
+    parser.add_argument("--roteiro",
+                        help="Lista de headlines. Padrao: roteiro.txt dentro "
+                             "da pasta.")
+    parser.add_argument("--sem-legenda", action="store_true", dest="sem_legenda",
+                        help="Nao transcreve. Sai so com headline e @.")
+    parser.add_argument("--modelo", default="small",
+                        choices=["tiny", "base", "small", "medium"],
+                        help="Modelo do Whisper para a legenda.")
+    parser.add_argument("--tipo-computacao", default="int8",
+                        dest="tipo_computacao")
+    parser.add_argument("--idioma", default="pt")
+    parser.add_argument("--refazer-transcricao", action="store_true",
+                        dest="refazer_transcricao",
+                        help="Ignora o cache de palavras e transcreve de novo.")
+
     parser.add_argument("--lote", action="store_true",
-                        help="Editar os videos ja coletados.")
+                        help="Editar os videos coletados (QUEBRADO - ver T11).")
     parser.add_argument("--perfis", action="append",
                         help="Restringe o lote a estes perfis. Pode repetir.")
     parser.add_argument("--limite", type=int, default=50)
     parser.add_argument("--refazer", action="store_true")
 
     args = parser.parse_args()
-    if not args.video and not args.lote:
-        parser.error("informe --video para um arquivo, ou --lote para a fila")
+    if not args.video and not args.lote and args.pasta is None:
+        parser.error("informe --pasta para uma pasta sua, --video para um "
+                     "arquivo, ou --lote para a fila do banco")
     return args
+
+
+def rodar_pasta(args, template, ffmpeg):
+    """O modo pasta, de ponta a ponta. Devolve o codigo de saida do processo."""
+    pasta = Path(args.pasta)
+    pasta_saida = config.SAIDA / "editados"
+
+    videos = listar_videos(pasta)
+    if not videos:
+        print("Nenhum video em %s." % pasta, file=sys.stderr)
+        print("Aceito: %s" % ", ".join(modulo_roteiro.EXTENSOES_DE_VIDEO),
+              file=sys.stderr)
+        return 1
+
+    entradas, problemas = ler_roteiro(pasta, args.roteiro)
+    pares, sem_headline, sem_video = modulo_roteiro.parear(
+        [video.name for video in videos], entradas)
+
+    # As reclamacoes vem ANTES de editar. Descobrir que a headline nao pareou
+    # depois de 40 minutos de ffmpeg seria descobrir tarde demais.
+    reclamacoes = modulo_roteiro.resumir_problemas(problemas, sem_video)
+    if reclamacoes:
+        print("Problemas no roteiro:")
+        for linha in reclamacoes:
+            print(linha)
+        print()
+
+    if sem_headline:
+        print("%d video(s) sem headline no roteiro: %s"
+              % (len(sem_headline), ", ".join(sem_headline[:5])
+                 + (" ..." if len(sem_headline) > 5 else "")))
+        if args.headline:
+            print("      vao usar o --headline passado na linha de comando")
+        print()
+
+    # `--headline` e o texto de quem nao esta no roteiro, nao um substituto dele
+    for nome in sem_headline:
+        if args.headline:
+            pares[nome] = args.headline
+
+    obter_modelo = None
+    if not args.sem_legenda:
+        obter_modelo = _modelo_sob_demanda(args.modelo, args.tipo_computacao)
+
+    print("%d video(s) em %s, template '%s'%s.\n"
+          % (len(videos), pasta, template.get("nome", args.template),
+             ", sem legenda" if args.sem_legenda else ""))
+
+    resultados = editar_pasta(
+        pasta, template, pasta_saida, pares, ffmpeg, obter_modelo,
+        args.modelo, args.idioma, args.perfil, args.refazer,
+        args.refazer_transcricao)
+
+    relatorio, caminho = gravar_relatorio(resultados, template, pasta_saida)
+
+    print("\n%d editado(s), %d pulado(s), %d falhou(ram)."
+          % (relatorio["editados"], relatorio["pulados"],
+             relatorio["falhados"]))
+    if relatorio["segundos_por_video"]:
+        print("Media de %.1fs por video. Total: %.1f minutos."
+              % (relatorio["segundos_por_video"],
+                 relatorio["segundos_totais"] / 60))
+    print("Pasta: %s" % pasta_saida)
+    print("Relatorio: %s" % caminho)
+    return 0 if not relatorio["falhados"] else 1
 
 
 def main():
@@ -324,6 +583,13 @@ def main():
         return 1
 
     pasta_saida = config.SAIDA / "editados"
+
+    if args.pasta is not None:
+        try:
+            return rodar_pasta(args, template, ffmpeg)
+        except (ErroDeEdicao, midia.ErroDeMidia) as erro:
+            print("\n%s\n" % erro, file=sys.stderr)
+            return 1
 
     if args.video:
         saida = Path(args.saida) if args.saida else (

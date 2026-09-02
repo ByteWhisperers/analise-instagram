@@ -38,7 +38,7 @@ o escopo cresceu.
 | Transcrição | `src/transcrever.py` | `transcricao.json` por post |
 | Análise | `src/analisar.py` | `dados/analises/<perfil>.json` |
 | Relatório | `src/relatorio.py` | `saida/relatorio.html` |
-| Edição | `src/editar.py` | `saida/editados/` |
+| **Edição em massa** | `src/editar.py --pasta` | `dados/gravacoes/*.mp4` + `roteiro.txt` → `saida/editados/`. **Não passa por banco** |
 
 Módulos de apoio, sem linha de comando própria:
 
@@ -54,7 +54,7 @@ Módulos de apoio, sem linha de comando própria:
 | `src/preparar.py` | as 7 checagens do ambiente. Verifica e instrui, não instala |
 | `src/db.py` | conexão com o PostgreSQL e execução das migrations |
 | `src/repos/` | **a única camada que escreve SQL** — onze módulos, um por agregado |
-| `src/banco.py` | SQLite antigo. **Só sobrevive porque `transcrever.py`, `analisar.py` e `editar.py` ainda o importam.** Morre quando a Fase 3 for portada |
+| `src/banco.py` | SQLite antigo. **Só sobrevive por `transcrever.py`, `analisar.py` e o caminho `editar --lote`** — que está quebrado, porque `dados/analise.db` não existe mais. Morre com a T11 |
 | `src/consultas.py` | idem — substituído por `repos/consultas.py` |
 | `src/coletor.py` | `InstagramCollector` / `ApifyInstagramCollector` — só descobre |
 | `src/downloader.py` | `VideoDownloader` / `YtDlpDownloader` — só baixa |
@@ -62,7 +62,11 @@ Módulos de apoio, sem linha de comando própria:
 | `src/midia.py` | achar o ffmpeg e extrair áudio |
 | `src/metricas.py` | as contas da análise, só função pura |
 | `src/desempenho.py` | engajamento, velocidade e score, só função pura |
-| `src/legenda.py` | palavras com tempo → `.ass` com karaokê |
+| `src/legenda.py` | palavras com tempo → `.ass` com karaokê. Só função pura |
+| `src/fala.py` | vídeo → palavras com tempo (Whisper local), com cache em `<video>.palavras.json` |
+| `src/roteiro.py` | a lista de headlines do lote: `nome.mp4 \| texto`. Só função pura |
+| `templates/padrao.json` | `meme-branco` — para vídeo **deitado ou quadrado** |
+| `templates/vertical.json` | `vertical-cheio` — para vídeo **já gravado em pé** (celular) |
 | `src/relatorio.css` | design system do relatório, em variáveis CSS |
 | `tests/test_idioma.py` | 26 conferências do detector de idioma |
 | `tests/test_lexico.py` | 41 conferências do colhedor de léxico |
@@ -75,15 +79,20 @@ Módulos de apoio, sem linha de comando própria:
 | `tests/test_desempenho.py` | 66 conferências dos scores e do crescimento |
 | `tests/test_db.py` | 108 conferências da conexão, das migrations e do config |
 | `tests/test_preparar.py` | 26 conferências do preparo e da saída de console |
+| `tests/test_legenda.py` | 64 conferências do `.ass`: cor AABBGGRR, tempo, escape e karaokê |
+| `tests/test_editar.py` | 83 conferências da corrente de filtros, da varredura e do relatório |
+| `tests/test_roteiro.py` | 49 conferências do pareamento vídeo↔headline |
+| `tests/test_fala.py` | 40 conferências do cache de transcrição, com dublê no Whisper |
 | `tests/test_repos_*.py` | 312 conferências contra um PostgreSQL de verdade |
 
-**1.027 conferências, todas passando** (contadas na saída real, não
-estimadas). Rode as dezesseis antes de dar qualquer coisa por pronta. As
+**1.263 conferências, todas passando** (contadas na saída real, não
+estimadas). Rode as vinte antes de dar qualquer coisa por pronta. As
 `test_repos_*` exigem o PostgreSQL de pé; se ele não responder, elas avisam e
 saem sem falhar.
 
 Apagados em 28/08/2026: `src/ig.py`, `src/buscar.py`, `src/coletar.py`,
-`tests/test_pipeline.py`. A construir: `src/selecionar.py`.
+`tests/test_pipeline.py`. `src/selecionar.py` **saiu do plano** em 01/09: a
+edição passou a comer de uma pasta dele, não do banco (ver T8).
 
 **O banco é PostgreSQL 17**, em `127.0.0.1:5432/analise_instagram`. Os testes
 usam um banco descartável (`..._teste`) criado e derrubado a cada rodada.
@@ -134,6 +143,13 @@ desfazer, e isso travava faxina de código.
 - **A análise continua sem API paga.** O Python calcula os números; a leitura
   qualitativa é escrita por mim. Nenhum LLM entra na conta.
 - **Nunca criar conta de Instagram.** Recusado, é padrão de conta falsa em massa.
+- **A edição em massa é de material próprio, e não passa por banco.** Vídeo
+  gravado por ele não tem `content_id` — forçar vínculo em `media_assets`
+  torceria o schema. O tempo por vídeo mora em `saida/editados/relatorio.json`.
+  `dados/gravacoes/` é ignorada pelo git: o repositório é público.
+- **O template certo depende da proporção do vídeo, e a escolha é sua.** O
+  `meme-branco` foi feito para vídeo deitado ou quadrado; com fonte já em 9:16
+  ele encolhe o vídeo à metade do quadro. Para celular, use o `vertical`.
 
 ## Máquina
 
@@ -142,7 +158,12 @@ i3-6006U, 3,9 GB de RAM, ~900 MB livres na prática.
 **A transcrição é rápida — medido, não estimado.** O plano original chutava
 3 a 5 minutos por minuto de vídeo. A medição real de 25/08/2026 deu **0,41x**
 com o modelo `base`: 42,7s de áudio transcritos em 17,5s. Um Reels de 1 minuto
-leva por volta de 25 segundos.
+leva por volta de 25 segundos. Com `small`, medido em 01/09/2026: **0,9x** —
+49,8s para 57,9s de áudio, com qualidade visivelmente melhor em português.
+
+**A edição custa mais que a transcrição.** Medido em 01/09/2026, num Reel de
+57,9s: **51s sem legenda, 69s com legenda queimada**. Como as palavras ficam
+em cache, refazer o lote só para trocar o template paga só o ffmpeg.
 
 O gargalo não é a transcrição — é a **pausa deliberada** entre requisições ao
 Instagram, que existe para a conta não ser bloqueada.

@@ -1,0 +1,75 @@
+{
+  "_leia": "Para video que JA foi gravado em pe (9:16), que e o caso de quase tudo que sai de celular. O video ocupa a tela inteira e o texto vai por cima, com contorno. Se o seu video for deitado ou quadrado, use o 'padrao' — este aqui cortaria as laterais.",
+
+  "nome": "vertical-cheio",
+
+  "canvas": {
+    "largura": 1080,
+    "altura": 1920,
+    "fundo": "#000000",
+    "fps": 30
+  },
+
+  "video": {
+    "_leia": "Area do tamanho do canvas inteiro: o video 9:16 preenche tudo e nao sobra borda.",
+    "topo": 0,
+    "altura": 1920,
+    "margem_lateral": 0
+  },
+
+  "headline": {
+    "_leia": "Por cima da imagem, entao precisa de contorno. Sem ele o texto some num quadro claro.",
+    "mostrar": true,
+    "fonte": "arialbd.ttf",
+    "tamanho": 64,
+    "cor": "#FFFFFF",
+    "cor_contorno": "#000000",
+    "contorno": 5,
+    "topo": 180,
+    "largura_em_caracteres": 26,
+    "espaco_entre_linhas": 12
+  },
+
+  "perfil": {
+    "mostrar": true,
+    "prefixo": "@",
+    "fonte": "arial.ttf",
+    "tamanho": 36,
+    "cor": "#FFFFFF",
+    "cor_contorno": "#000000",
+    "contorno": 3,
+    "topo": 1780
+  },
+
+  "logo": {
+    "_leia": "Caminho de um PNG. Deixe null para nao usar.",
+    "arquivo": null,
+    "altura": 90,
+    "topo": 60,
+    "posicao": "centro"
+  },
+
+  "legenda": {
+    "_leia": "Mais baixa que no 'padrao': aqui o video ocupa tudo, e legenda no meio taparia a cena.",
+    "mostrar": true,
+    "fonte": "Arial",
+    "tamanho": 78,
+    "negrito": true,
+    "cor": "#FFFFFF",
+    "cor_destaque": "#FFE100",
+    "cor_contorno": "#000000",
+    "contorno": 6,
+    "sombra": 0,
+    "destacar_palavra": true,
+    "palavras_por_grupo": 3,
+    "pausa_que_quebra": 0.8,
+    "posicao_y": 1450,
+    "margem_lateral": 80
+  },
+
+  "saida": {
+    "preset": "veryfast",
+    "qualidade": 23,
+    "audio_kbps": 128
+  }
+}

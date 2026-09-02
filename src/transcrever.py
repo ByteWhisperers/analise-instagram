@@ -18,14 +18,21 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime
 
 import console
 import banco
 import config
+import fala
 import midia
 
-SEGUNDOS_DO_GANCHO = 3.0
+# Quem sabe falar com o Whisper e o `fala.py` — o editor de pasta precisa da
+# mesma capacidade sem perfil, sem post e sem banco. Aqui ficam so os nomes,
+# para o resto do arquivo continuar lendo igual.
+carregar_modelo = fala.carregar_modelo
+transcrever_arquivo = fala.transcrever_arquivo
+montar_transcricao = fala.montar_transcricao
+
+SEGUNDOS_DO_GANCHO = fala.SEGUNDOS_DO_GANCHO
 
 
 def _achar_video(pasta_post):
@@ -61,79 +68,6 @@ def listar_pendentes(perfil_filtro=None, refazer=False):
                 pendentes.append((pasta_perfil.name, pasta_post, video))
 
     return pendentes
-
-
-def carregar_modelo(nome, tipo_computacao):
-    """Carrega o modelo uma vez so. No primeiro uso ele baixa (~500 MB no small)."""
-    from faster_whisper import WhisperModel  # import tardio: e pesado
-
-    print("Carregando o modelo '%s' (%s). No primeiro uso ele baixa sozinho."
-          % (nome, tipo_computacao))
-    inicio = time.monotonic()
-    modelo = WhisperModel(nome, device="cpu", compute_type=tipo_computacao)
-    print("Modelo pronto em %.1fs.\n" % (time.monotonic() - inicio))
-    return modelo
-
-
-def transcrever_arquivo(modelo, wav, idioma):
-    """Devolve (segmentos, palavras, texto_completo, duracao_do_audio).
-
-    `word_timestamps=True` custa pouco a mais e entrega o segundo de CADA
-    palavra. E o que permite a legenda que acende palavra por palavra, no
-    editor. Sem isso, so daria para acender frase inteira.
-    """
-    segmentos_brutos, info = modelo.transcribe(
-        str(wav),
-        language=idioma,
-        beam_size=1,          # maquina fraca: beam maior custa caro e ganha pouco
-        vad_filter=True,      # corta silencio; acelera bastante
-        vad_parameters={"min_silence_duration_ms": 500},
-        word_timestamps=True,
-    )
-
-    segmentos = []
-    palavras = []
-    for segmento in segmentos_brutos:  # e um gerador: aqui e onde o trabalho acontece
-        texto = segmento.text.strip()
-        if not texto:
-            continue
-
-        segmentos.append({
-            "inicio": round(segmento.start, 2),
-            "fim": round(segmento.end, 2),
-            "texto": texto,
-        })
-
-        for palavra in (segmento.words or []):
-            limpa = palavra.word.strip()
-            if limpa:
-                palavras.append({
-                    "palavra": limpa,
-                    "inicio": round(palavra.start, 2),
-                    "fim": round(palavra.end, 2),
-                })
-
-    texto_completo = " ".join(s["texto"] for s in segmentos)
-    return segmentos, palavras, texto_completo, info.duration
-
-
-def montar_transcricao(segmentos, palavras, texto, duracao, gasto, nome_modelo,
-                       idioma):
-    gancho = " ".join(s["texto"] for s in segmentos
-                      if s["inicio"] < SEGUNDOS_DO_GANCHO)
-
-    return {
-        "texto": texto,
-        "gancho_falado": gancho,
-        "segmentos": segmentos,
-        "palavras": palavras,
-        "duracao_audio_segundos": round(duracao, 2),
-        "tempo_de_transcricao_segundos": round(gasto, 1),
-        "quantas_vezes_a_duracao": round(gasto / duracao, 1) if duracao else None,
-        "modelo": nome_modelo,
-        "idioma": idioma,
-        "transcrito_em": datetime.now().isoformat(timespec="seconds"),
-    }
 
 
 def processar(modelo, pasta_post, video, nome_modelo, idioma, ffmpeg, conexao=None):
